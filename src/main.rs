@@ -1,14 +1,8 @@
-fn main() {
-    struct Structure(i32);
-    impl std::fmt::Display for Structure {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(f, "{}", self.0)
-        }
-    }
-    println!("This struct `{}` prints just the number now!", Structure(3));
+mod llms;
 
-    #[derive(Debug)]
-    struct User(String);
-
-    println!("{:?}", User("Muneeb"));
+#[tokio::main]
+async fn main() {
+    dotenvy::dotenv().ok();
+    let response = llms::openai::call_open_api("Hello, world!").await.unwrap();
+    println!("{}", response);
 }
