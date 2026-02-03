@@ -27,8 +27,7 @@ pub async fn run(
                     arguments,
                 } => {
                     has_tool_calls = true;
-                    let result = tools::execute(name, arguments)?;
-
+                    let result = tools::execute(name, arguments);
                     history.push(serde_json::json!({
                         "type": "function_call",
                         "call_id": call_id,

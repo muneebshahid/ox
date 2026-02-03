@@ -1,5 +1,3 @@
-use anyhow::{Context, Result};
-
 pub fn definitions() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
@@ -25,28 +23,57 @@ pub fn definitions() -> Vec<serde_json::Value> {
                 }
             }
         }),
+        serde_json::json!({
+            "type": "function",
+            "name": "write_file",
+            "description": "Write content to a file, creating it if it doesn't exist or overwriting if it does",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "The file path to write to" },
+                    "content": { "type": "string", "description": "The content to write to the file" }
+                },
+                "required": ["path", "content"]
+            }
+        }),
     ]
 }
 
-pub fn execute(name: &str, arguments: &str) -> Result<String> {
-    let args: serde_json::Value =
-        serde_json::from_str(arguments).context("failed to parse tool arguments")?;
+pub fn execute(name: &str, arguments: &str) -> String {
+    let args: serde_json::Value = match serde_json::from_str(arguments) {
+        Ok(v) => v,
+        Err(e) => return format!("Error parsing arguments: {e}"),
+    };
 
     match name {
         "read_file" => read_file(&args),
         "ls" => ls(&args),
-        _ => Ok(format!("Unknown tool: {name}")),
+        "write_file" => write_file(&args),
+        _ => format!("Unknown tool: {name}"),
     }
 }
 
-fn read_file(args: &serde_json::Value) -> Result<String> {
-    let path = args["path"]
-        .as_str()
-        .context("missing 'path' argument for read_file")?;
-    Ok(std::fs::read_to_string(path).unwrap_or_else(|e| format!("Error: {e}")))
+fn read_file(args: &serde_json::Value) -> String {
+    let Some(path) = args["path"].as_str() else {
+        return "Error: missing 'path' argument".to_string();
+    };
+    std::fs::read_to_string(path).unwrap_or_else(|e| format!("Error: {e}"))
 }
 
-fn ls(args: &serde_json::Value) -> Result<String> {
+fn write_file(args: &serde_json::Value) -> String {
+    let Some(path) = args["path"].as_str() else {
+        return "Error: missing 'path' argument".to_string();
+    };
+    let Some(content) = args["content"].as_str() else {
+        return "Error: missing 'content' argument".to_string();
+    };
+    match std::fs::write(path, content) {
+        Ok(_) => format!("Successfully wrote to {path}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+fn ls(args: &serde_json::Value) -> String {
     let path = args["path"].as_str().unwrap_or(".");
     match std::fs::read_dir(path) {
         Ok(entries) => {
@@ -57,8 +84,8 @@ fn ls(args: &serde_json::Value) -> Result<String> {
                 items.push(format!("{name}{suffix}"));
             }
             items.sort();
-            Ok(items.join("\n"))
+            items.join("\n")
         }
-        Err(e) => Ok(format!("Error: {e}")),
+        Err(e) => format!("Error: {e}"),
     }
 }
