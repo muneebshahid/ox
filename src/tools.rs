@@ -36,6 +36,18 @@ pub fn definitions() -> Vec<serde_json::Value> {
                 "required": ["path", "content"]
             }
         }),
+        serde_json::json!({
+            "type": "function",
+            "name": "bash",
+            "description": "Execute a shell command and return its output",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "The shell command to execute" }
+                },
+                "required": ["command"]
+            }
+        }),
     ]
 }
 
@@ -49,6 +61,7 @@ pub fn execute(name: &str, arguments: &str) -> String {
         "read_file" => read_file(&args),
         "ls" => ls(&args),
         "write_file" => write_file(&args),
+        "bash" => bash(&args),
         _ => format!("Unknown tool: {name}"),
     }
 }
@@ -69,6 +82,38 @@ fn write_file(args: &serde_json::Value) -> String {
     };
     match std::fs::write(path, content) {
         Ok(_) => format!("Successfully wrote to {path}"),
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+fn bash(args: &serde_json::Value) -> String {
+    let Some(command) = args["command"].as_str() else {
+        return "Error: missing 'command' argument".to_string();
+    };
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let mut result = String::new();
+            if !stdout.is_empty() {
+                result.push_str(&stdout);
+            }
+            if !stderr.is_empty() {
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(&format!("stderr: {stderr}"));
+            }
+            if result.is_empty() {
+                format!("Command exited with code {}", output.status.code().unwrap_or(-1))
+            } else {
+                result
+            }
+        }
         Err(e) => format!("Error: {e}"),
     }
 }
