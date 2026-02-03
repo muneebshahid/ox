@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/responses";
@@ -28,15 +29,19 @@ pub struct ApiResponse {
 pub async fn call_open_api(
     messages: &[serde_json::Value],
     tools: &[serde_json::Value],
-) -> Result<ApiResponse, Box<dyn std::error::Error>> {
-    let key = std::env::var("OPENAI_API_KEY")?;
+) -> Result<ApiResponse> {
+    let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
     let client = reqwest::Client::new();
     let res = client
         .post(OPENAI_API_URL)
-        .header("Authorization", format!("Bearer {}", key))
-        .json(&serde_json::json!({ "model": "gpt-4",
-        "input": messages, "tools": tools }))
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&serde_json::json!({
+            "model": "gpt-4",
+            "input": messages,
+            "tools": tools
+        }))
         .send()
-        .await?;
-    Ok(res.json().await?)
+        .await
+        .context("failed to send request to OpenAI")?;
+    res.json().await.context("failed to parse OpenAI response")
 }
