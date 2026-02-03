@@ -81,12 +81,13 @@ fn write_file(args: &serde_json::Value) -> String {
         return "Error: missing 'content' argument".to_string();
     };
     match std::fs::write(path, content) {
-        Ok(_) => format!("Successfully wrote to {path}"),
+        Ok(()) => format!("Successfully wrote to {path}"),
         Err(e) => format!("Error: {e}"),
     }
 }
 
 fn bash(args: &serde_json::Value) -> String {
+    use std::fmt::Write;
     let Some(command) = args["command"].as_str() else {
         return "Error: missing 'command' argument".to_string();
     };
@@ -106,7 +107,7 @@ fn bash(args: &serde_json::Value) -> String {
                 if !result.is_empty() {
                     result.push('\n');
                 }
-                result.push_str(&format!("stderr: {stderr}"));
+                let _ = write!(result, "stderr: {stderr}");
             }
             if result.is_empty() {
                 format!("Command exited with code {}", output.status.code().unwrap_or(-1))
