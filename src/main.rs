@@ -46,10 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for item in &response.output {
                 match item {
                     OutputItem::Message { content } => {
-                        println!("{}", content[0].text);
+                        let text = &content.first().ok_or("empty content")?.text;
+                        println!("{}", text);
                         history.push(serde_json::json!({
                             "role": "assistant",
-                            "content": content[0].text
+                            "content": text
                         }));
                     }
                     OutputItem::FunctionCall {
