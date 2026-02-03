@@ -26,8 +26,8 @@ pub struct ApiResponse {
     pub output: Vec<OutputItem>,
 }
 
-pub async fn call_open_api(
-    messages: &[serde_json::Value],
+pub async fn call_openai(
+    input: &[serde_json::Value],
     tools: &[serde_json::Value],
 ) -> Result<ApiResponse> {
     let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
@@ -37,7 +37,7 @@ pub async fn call_open_api(
         .header("Authorization", format!("Bearer {key}"))
         .json(&serde_json::json!({
             "model": "gpt-4",
-            "input": messages,
+            "input": input,
             "tools": tools
         }))
         .send()
