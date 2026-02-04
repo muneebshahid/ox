@@ -11,6 +11,7 @@ cp .env.example .env
 
 ```text
 OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
 ## Usage

@@ -9,12 +9,13 @@ pub async fn call_openai(
     instructions: &str,
 ) -> Result<Response> {
     let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
+    let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-mini".to_string());
     let client = reqwest::Client::new();
     client
         .post(OPENAI_API_URL)
         .header("Authorization", format!("Bearer {key}"))
         .json(&serde_json::json!({
-            "model": "gpt-4",
+            "model": model,
             "instructions": instructions,
             "input": input,
             "tools": tools,
