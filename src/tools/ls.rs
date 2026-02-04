@@ -1,3 +1,5 @@
+use super::truncate;
+
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -23,7 +25,7 @@ pub fn run(args: &serde_json::Value) -> String {
                 items.push(format!("{name}{suffix}"));
             }
             items.sort();
-            items.join("\n")
+            truncate::head(&items.join("\n"), 500, "entries remaining")
         }
         Err(e) => format!("Error: {e}"),
     }

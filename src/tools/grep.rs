@@ -1,3 +1,5 @@
+use super::truncate;
+
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -35,7 +37,7 @@ pub fn run(args: &serde_json::Value) -> String {
             if stdout.is_empty() {
                 format!("No matches found for '{pattern}'")
             } else {
-                stdout.into_owned()
+                truncate::head(&stdout, 100, "matches remaining")
             }
         }
         Err(e) => format!("Error: {e}"),

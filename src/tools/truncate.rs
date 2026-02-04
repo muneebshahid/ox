@@ -1,11 +1,11 @@
 const MAX_LINES: usize = 2000;
 const MAX_BYTES: usize = 50 * 1024; // 50KB
 
-/// Keep the first N lines / bytes. Used for file reads.
-pub fn head(text: &str) -> String {
+/// Keep the first `max_lines` lines or `MAX_BYTES`, whichever hits first.
+pub fn head(text: &str, max_lines: usize, label: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
 
-    if lines.len() <= MAX_LINES && text.len() <= MAX_BYTES {
+    if lines.len() <= max_lines && text.len() <= MAX_BYTES {
         return text.to_string();
     }
 
@@ -14,7 +14,7 @@ pub fn head(text: &str) -> String {
 
     for line in &lines {
         let line_bytes = byte_count + line.len() + 1; // +1 for newline
-        if line_count >= MAX_LINES || line_bytes > MAX_BYTES {
+        if line_count >= max_lines || line_bytes > MAX_BYTES {
             break;
         }
         byte_count = line_bytes;
@@ -23,7 +23,7 @@ pub fn head(text: &str) -> String {
 
     let truncated = &text[..byte_count];
     let remaining = lines.len() - line_count;
-    format!("{truncated}\n... truncated ({remaining} lines remaining, use offset to read more)")
+    format!("{truncated}\n... truncated ({remaining} {label})")
 }
 
 /// Keep the last N lines / bytes. Used for command output.

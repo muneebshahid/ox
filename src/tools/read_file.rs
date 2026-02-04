@@ -47,5 +47,5 @@ pub fn run(args: &serde_json::Value) -> String {
         .map_or(total_lines, |l| (start + l).min(total_lines));
 
     let selected = lines[start..end].join("\n");
-    truncate::head(&selected)
+    truncate::head(&selected, 2000, "lines remaining, use offset to read more")
 }
