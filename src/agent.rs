@@ -21,12 +21,13 @@ enum StreamEvent {
 }
 
 pub async fn run(
+    client: &reqwest::Client,
     history: &mut Vec<serde_json::Value>,
     tools_defs: &[serde_json::Value],
     instructions: &str,
 ) -> Result<()> {
     loop {
-        let response = api::call_openai(history, tools_defs, instructions).await?;
+        let response = api::call_openai(client, history, tools_defs, instructions).await?;
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut has_tool_calls = false;

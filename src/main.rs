@@ -13,6 +13,7 @@ async fn main() -> Result<()> {
     let stdin = io::stdin();
     let tool_defs = tools::definitions();
     let instructions = prompt::build();
+    let client = reqwest::Client::new();
 
     loop {
         print!("> ");
@@ -31,7 +32,7 @@ async fn main() -> Result<()> {
             "content": input
         }));
 
-        agent::run(&mut history, &tool_defs, &instructions).await?;
+        agent::run(&client, &mut history, &tool_defs, &instructions).await?;
     }
     Ok(())
 }
