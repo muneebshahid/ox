@@ -1,3 +1,4 @@
+use crate::{api, tools};
 use anyhow::Result;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -25,7 +26,7 @@ pub async fn run(
     instructions: &str,
 ) -> Result<()> {
     loop {
-        let response = crate::api::call_openai(history, tools_defs, instructions).await?;
+        let response = api::call_openai(history, tools_defs, instructions).await?;
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut has_tool_calls = false;
@@ -72,7 +73,7 @@ pub async fn run(
                             let call_id = item["call_id"].as_str().unwrap_or("");
                             let name = item["name"].as_str().unwrap_or("");
                             let arguments = item["arguments"].as_str().unwrap_or("");
-                            let result = crate::tools::execute(name, arguments);
+                            let result = tools::execute(name, arguments);
                             history.push(serde_json::json!({
                                 "type": "function_call",
                                 "call_id": call_id,
