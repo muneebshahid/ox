@@ -6,9 +6,10 @@ use crate::tools;
 pub async fn run(
     history: &mut Vec<serde_json::Value>,
     tools_defs: &[serde_json::Value],
+    instructions: &str,
 ) -> Result<()> {
     loop {
-        let response = crate::api::call_openai(history, tools_defs).await?;
+        let response = crate::api::call_openai(history, tools_defs, instructions).await?;
         let mut has_tool_calls = false;
 
         for item in &response.output {

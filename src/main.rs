@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod prompt;
 mod tools;
 
 use anyhow::Result;
@@ -11,6 +12,7 @@ async fn main() -> Result<()> {
     let mut history: Vec<serde_json::Value> = Vec::new();
     let stdin = io::stdin();
     let tool_defs = tools::definitions();
+    let instructions = prompt::build();
 
     loop {
         print!("> ");
@@ -29,7 +31,7 @@ async fn main() -> Result<()> {
             "content": input
         }));
 
-        agent::run(&mut history, &tool_defs).await?;
+        agent::run(&mut history, &tool_defs, &instructions).await?;
     }
     Ok(())
 }

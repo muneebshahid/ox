@@ -29,6 +29,7 @@ pub struct ApiResponse {
 pub async fn call_openai(
     input: &[serde_json::Value],
     tools: &[serde_json::Value],
+    instructions: &str,
 ) -> Result<ApiResponse> {
     let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
     let client = reqwest::Client::new();
@@ -37,6 +38,7 @@ pub async fn call_openai(
         .header("Authorization", format!("Bearer {key}"))
         .json(&serde_json::json!({
             "model": "gpt-4",
+            "instructions": instructions,
             "input": input,
             "tools": tools
         }))
