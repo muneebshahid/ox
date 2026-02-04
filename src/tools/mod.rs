@@ -4,6 +4,7 @@ mod find;
 mod grep;
 mod ls;
 mod read_file;
+mod truncate;
 mod write_file;
 
 pub fn definitions() -> Vec<serde_json::Value> {

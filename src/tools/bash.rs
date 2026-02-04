@@ -1,8 +1,10 @@
+use super::truncate;
+
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
         "name": "bash",
-        "description": "Execute a shell command and return its output",
+        "description": "Execute a shell command and return its output. Output is truncated to the last 2000 lines or 50KB.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -43,7 +45,7 @@ pub fn run(args: &serde_json::Value) -> String {
                     output.status.code().unwrap_or(-1)
                 )
             } else {
-                result
+                truncate::tail(&result)
             }
         }
         Err(e) => format!("Error: {e}"),
