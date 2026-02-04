@@ -9,7 +9,7 @@ cp .env.example .env
 # Add your OpenAI API key to .env
 ```
 
-```
+```text
 OPENAI_API_KEY=sk-...
 ```
 
@@ -34,19 +34,19 @@ There are 250 lines across 9 Rust files.
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents |
-| `write_file` | Create or overwrite files |
-| `edit` | Search-and-replace edit (old_text must be unique) |
-| `ls` | List directory contents |
-| `grep` | Search file contents with `rg` (falls back to `grep`) |
-| `find` | Find files by glob pattern with `fd` (falls back to `find`) |
-| `bash` | Execute shell commands |
+| Tool         | Description                                                 |
+| ------------ | ----------------------------------------------------------- |
+| `read_file`  | Read file contents                                          |
+| `write_file` | Create or overwrite files                                   |
+| `edit`       | Search-and-replace edit (old_text must be unique)           |
+| `ls`         | List directory contents                                     |
+| `grep`       | Search file contents with `rg` (falls back to `grep`)       |
+| `find`       | Find files by glob pattern with `fd` (falls back to `find`) |
+| `bash`       | Execute shell commands                                      |
 
 ## Architecture
 
-```
+```text
 src/
   main.rs       REPL loop — reads input, manages history
   agent.rs      Agent loop — streams API response, dispatches tool calls
