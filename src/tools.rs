@@ -52,6 +52,32 @@ pub fn definitions() -> Vec<serde_json::Value> {
         }),
         serde_json::json!({
             "type": "function",
+            "name": "grep",
+            "description": "Search for a text pattern in files within a directory. Returns matching lines with file paths and line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "The text pattern to search for" },
+                    "path": { "type": "string", "description": "The directory to search in. Defaults to current directory." }
+                },
+                "required": ["pattern"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
+            "name": "find",
+            "description": "Find files by name pattern. Searches recursively in the given directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "The filename pattern to match (e.g. '*.rs', 'main.*')" },
+                    "path": { "type": "string", "description": "The directory to search in. Defaults to current directory." }
+                },
+                "required": ["pattern"]
+            }
+        }),
+        serde_json::json!({
+            "type": "function",
             "name": "bash",
             "description": "Execute a shell command and return its output",
             "parameters": {
@@ -76,6 +102,8 @@ pub fn execute(name: &str, arguments: &str) -> String {
         "ls" => ls(&args),
         "write_file" => write_file(&args),
         "edit" => edit(&args),
+        "grep" => grep(&args),
+        "find" => find(&args),
         "bash" => bash(&args),
         _ => format!("Unknown tool: {name}"),
     }
@@ -130,6 +158,64 @@ fn edit(args: &serde_json::Value) -> String {
         n => format!(
             "Error: old_text found {n} times, include more surrounding context to make it unique"
         ),
+    }
+}
+
+fn grep(args: &serde_json::Value) -> String {
+    let Some(pattern) = args["pattern"].as_str() else {
+        return "Error: missing 'pattern' argument".to_string();
+    };
+    let path = args["path"].as_str().unwrap_or(".");
+
+    // Try ripgrep first, fall back to system grep
+    let result = std::process::Command::new("rg")
+        .args(["-n", "--no-heading", pattern, path])
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("grep")
+                .args(["-rn", pattern, path])
+                .output()
+        });
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.is_empty() {
+                format!("No matches found for '{pattern}'")
+            } else {
+                stdout.into_owned()
+            }
+        }
+        Err(e) => format!("Error: {e}"),
+    }
+}
+
+fn find(args: &serde_json::Value) -> String {
+    let Some(pattern) = args["pattern"].as_str() else {
+        return "Error: missing 'pattern' argument".to_string();
+    };
+    let path = args["path"].as_str().unwrap_or(".");
+
+    // Try fd first, fall back to system find
+    let result = std::process::Command::new("fd")
+        .args(["--glob", pattern, path])
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("find")
+                .args([path, "-name", pattern])
+                .output()
+        });
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.is_empty() {
+                format!("No files found matching '{pattern}'")
+            } else {
+                stdout.into_owned()
+            }
+        }
+        Err(e) => format!("Error: {e}"),
     }
 }
 
