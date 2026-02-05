@@ -11,7 +11,7 @@ pub async fn call_openai(
 ) -> Result<Response> {
     let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
     let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-mini".to_string());
-    client
+    let response = client
         .post(OPENAI_API_URL)
         .header("Authorization", format!("Bearer {key}"))
         .json(&serde_json::json!({
@@ -23,5 +23,15 @@ pub async fn call_openai(
         }))
         .send()
         .await
-        .context("failed to send request to OpenAI")
+        .context("failed to send request to OpenAI")?;
+
+    match response.status() {
+        reqwest::StatusCode::OK => Ok(response),
+        status => {
+            let body = response.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "OpenAI API returned error status: ({status}): {body}"
+            ))
+        }
+    }
 }
