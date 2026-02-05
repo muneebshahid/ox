@@ -32,7 +32,9 @@ async fn main() -> Result<()> {
             "content": input
         }));
 
-        agent::run(&client, &mut history, &tool_defs, &instructions).await?;
+        agent::run(&client, &mut history, &tool_defs, &instructions)
+            .await
+            .unwrap_or_else(|e| eprintln!("Error: {e}"));
     }
     Ok(())
 }
