@@ -9,7 +9,7 @@ pub(super) struct EventHandler<'a> {
 }
 
 impl<'a> EventHandler<'a> {
-    pub(super) fn new(history: &'a mut Vec<serde_json::Value>) -> Self {
+    pub(super) const fn new(history: &'a mut Vec<serde_json::Value>) -> Self {
         Self {
             history,
             has_tool_calls: false,
@@ -18,8 +18,8 @@ impl<'a> EventHandler<'a> {
 
     pub(super) fn handle_event(&mut self, event: StreamEvent) -> Result<()> {
         match event {
-            StreamEvent::OutputItemAdded { item } => self.handle_output_item_added(&item),
-            StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta)?,
+            StreamEvent::OutputItemAdded { item } => Self::handle_output_item_added(&item),
+            StreamEvent::TextDelta { delta } => Self::handle_text_delta(&delta)?,
             StreamEvent::OutputItemDone { item } => self.handle_output_item_done(&item),
             StreamEvent::Ignored => {}
         }
@@ -27,17 +27,17 @@ impl<'a> EventHandler<'a> {
         Ok(())
     }
 
-    pub(super) fn has_tool_calls(&self) -> bool {
+    pub(super) const fn has_tool_calls(&self) -> bool {
         self.has_tool_calls
     }
 
-    fn handle_output_item_added(&self, item: &OutputItem) {
+    fn handle_output_item_added(item: &OutputItem) {
         if item.item_type == "function_call" {
             println!("Calling {}...", item.name.as_deref().unwrap_or("unknown"));
         }
     }
 
-    fn handle_text_delta(&self, delta: &str) -> Result<()> {
+    fn handle_text_delta(delta: &str) -> Result<()> {
         print!("{delta}");
         io::stdout().flush()?;
         Ok(())
