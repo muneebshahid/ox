@@ -1,15 +1,22 @@
 mod agent;
 mod api;
+mod cli;
 mod prompt;
+mod session;
 mod tools;
 
 use anyhow::Result;
 use std::io::{self, BufRead, Write};
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    let mut history: Vec<serde_json::Value> = Vec::new();
+    let cli = cli::parse_args()?;
+    if cli.list_sessions {
+        return session::list_sessions();
+    }
+    let mut session_state = session::open_session(&cli.session_name)?;
     let stdin = io::stdin();
     let tool_defs = tools::definitions();
     let instructions = prompt::build();
@@ -27,14 +34,37 @@ async fn main() -> Result<()> {
             break;
         }
 
-        history.push(serde_json::json!({
+        session_state.append(serde_json::json!({
             "role": "user",
             "content": input
-        }));
+        }))?;
 
-        agent::run(&client, &mut history, &tool_defs, &instructions)
-            .await
-            .unwrap_or_else(|e| eprintln!("Error: {e}"));
+        let persist_start = session_state.history_len();
+
+        tokio::select! {
+            run_result = agent::run(&client, session_state.history_mut(), &tool_defs, &instructions) => {
+                if let Err(e) = run_result {
+                    eprintln!("Error: {e}");
+                }
+            }
+            signal_result = signal::ctrl_c() => {
+                match signal_result {
+                    Ok(()) => {
+                        eprintln!("\nInterrupted. Returning to prompt.");
+                    }
+                    Err(e) => {
+                        eprintln!("\nError waiting for Ctrl+C signal: {e}");
+                    }
+                }
+            }
+        }
+
+        if let Err(e) = session_state.persist_from(persist_start) {
+            eprintln!(
+                "Warning: failed to persist session entries for {}: {e}",
+                session_state.session_name()
+            );
+        }
     }
     Ok(())
 }
