@@ -27,6 +27,7 @@ pub fn run(args: &serde_json::Value) -> String {
         .output()
     {
         Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let mut result = String::new();
@@ -39,11 +40,18 @@ pub fn run(args: &serde_json::Value) -> String {
                 }
                 let _ = write!(result, "stderr: {stderr}");
             }
+            if !output.status.success() {
+                if result.is_empty() {
+                    return format!("Error: command exited with code {exit_code}");
+                }
+                return format!(
+                    "Error: command exited with code {exit_code}\n{}",
+                    truncate::tail(&result)
+                );
+            }
+
             if result.is_empty() {
-                format!(
-                    "Command exited with code {}",
-                    output.status.code().unwrap_or(-1)
-                )
+                format!("Command exited with code {exit_code}")
             } else {
                 truncate::tail(&result)
             }
