@@ -1,5 +1,3 @@
-use super::ToolResult;
-
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -17,34 +15,34 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> ToolResult {
+pub fn run(args: &serde_json::Value) -> String {
     let Some(path) = args["path"].as_str() else {
-        return ToolResult::error("Error: missing 'path' argument");
+        return "Error: missing 'path' argument".to_string();
     };
     let Some(old_text) = args["old_text"].as_str() else {
-        return ToolResult::error("Error: missing 'old_text' argument");
+        return "Error: missing 'old_text' argument".to_string();
     };
     let Some(new_text) = args["new_text"].as_str() else {
-        return ToolResult::error("Error: missing 'new_text' argument");
+        return "Error: missing 'new_text' argument".to_string();
     };
 
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(e) => return ToolResult::error(format!("Error reading file: {e}")),
+        Err(e) => return format!("Error reading file: {e}"),
     };
 
     let count = content.matches(old_text).count();
     match count {
-        0 => ToolResult::error("Error: old_text not found in file"),
+        0 => "Error: old_text not found in file".to_string(),
         1 => {
             let new_content = content.replacen(old_text, new_text, 1);
             match std::fs::write(path, new_content) {
-                Ok(()) => ToolResult::success(format!("Successfully edited {path}")),
-                Err(e) => ToolResult::error(format!("Error writing file: {e}")),
+                Ok(()) => format!("Successfully edited {path}"),
+                Err(e) => format!("Error writing file: {e}"),
             }
         }
-        n => ToolResult::error(format!(
+        n => format!(
             "Error: old_text found {n} times, include more surrounding context to make it unique"
-        )),
+        ),
     }
 }

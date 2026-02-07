@@ -78,7 +78,7 @@ impl<'a> EventHandler<'a> {
         self.history.push(serde_json::json!({
             "type": "function_call_output",
             "call_id": call_id,
-            "output": result.to_history_output()
+            "output": result
         }));
         self.has_tool_calls = true;
     }

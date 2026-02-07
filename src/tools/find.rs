@@ -1,5 +1,4 @@
 use super::truncate;
-use super::ToolResult;
 
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
@@ -17,9 +16,9 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> ToolResult {
+pub fn run(args: &serde_json::Value) -> String {
     let Some(pattern) = args["pattern"].as_str() else {
-        return ToolResult::error("Error: missing 'pattern' argument");
+        return "Error: missing 'pattern' argument".to_string();
     };
     let path = args["path"].as_str().unwrap_or(".");
 
@@ -36,11 +35,11 @@ pub fn run(args: &serde_json::Value) -> ToolResult {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.is_empty() {
-                ToolResult::success(format!("No files found matching '{pattern}'"))
+                format!("No files found matching '{pattern}'")
             } else {
-                ToolResult::success(truncate::head(&stdout, 1000, "results remaining"))
+                truncate::head(&stdout, 1000, "results remaining")
             }
         }
-        Err(e) => ToolResult::error(format!("Error: {e}")),
+        Err(e) => format!("Error: {e}"),
     }
 }

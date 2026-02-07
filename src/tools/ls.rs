@@ -1,5 +1,4 @@
 use super::truncate;
-use super::ToolResult;
 
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
@@ -15,7 +14,7 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> ToolResult {
+pub fn run(args: &serde_json::Value) -> String {
     let path = args["path"].as_str().unwrap_or(".");
     match std::fs::read_dir(path) {
         Ok(entries) => {
@@ -26,8 +25,8 @@ pub fn run(args: &serde_json::Value) -> ToolResult {
                 items.push(format!("{name}{suffix}"));
             }
             items.sort();
-            ToolResult::success(truncate::head(&items.join("\n"), 500, "entries remaining"))
+            truncate::head(&items.join("\n"), 500, "entries remaining")
         }
-        Err(e) => ToolResult::error(format!("Error: {e}")),
+        Err(e) => format!("Error: {e}"),
     }
 }

@@ -1,5 +1,3 @@
-use super::ToolResult;
-
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -16,15 +14,15 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> ToolResult {
+pub fn run(args: &serde_json::Value) -> String {
     let Some(path) = args["path"].as_str() else {
-        return ToolResult::error("Error: missing 'path' argument");
+        return "Error: missing 'path' argument".to_string();
     };
     let Some(content) = args["content"].as_str() else {
-        return ToolResult::error("Error: missing 'content' argument");
+        return "Error: missing 'content' argument".to_string();
     };
     match std::fs::write(path, content) {
-        Ok(()) => ToolResult::success(format!("Successfully wrote to {path}")),
-        Err(e) => ToolResult::error(format!("Error: {e}")),
+        Ok(()) => format!("Successfully wrote to {path}"),
+        Err(e) => format!("Error: {e}"),
     }
 }

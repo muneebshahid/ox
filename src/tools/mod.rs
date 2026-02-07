@@ -4,11 +4,8 @@ mod find;
 mod grep;
 mod ls;
 mod read_file;
-mod tool_result;
 mod truncate;
 mod write_file;
-
-pub use tool_result::ToolResult;
 
 pub fn definitions() -> Vec<serde_json::Value> {
     vec![
@@ -22,10 +19,10 @@ pub fn definitions() -> Vec<serde_json::Value> {
     ]
 }
 
-pub fn execute(name: &str, arguments: &str) -> ToolResult {
+pub fn execute(name: &str, arguments: &str) -> String {
     let args: serde_json::Value = match serde_json::from_str(arguments) {
         Ok(v) => v,
-        Err(e) => return ToolResult::error(format!("Error parsing arguments: {e}")),
+        Err(e) => return format!("Error parsing arguments: {e}"),
     };
 
     match name {
@@ -36,6 +33,6 @@ pub fn execute(name: &str, arguments: &str) -> ToolResult {
         "grep" => grep::run(&args),
         "find" => find::run(&args),
         "bash" => bash::run(&args),
-        _ => ToolResult::error(format!("Unknown tool: {name}")),
+        _ => format!("Unknown tool: {name}"),
     }
 }
