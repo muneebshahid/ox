@@ -8,8 +8,9 @@ pub async fn call_openai(
     tools: &[serde_json::Value],
     instructions: &str,
 ) -> Result<Response> {
-    let request_auth = auth::resolve_request_auth()?;
-    let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| request_auth.default_model.to_string());
+    let request_auth = auth::resolve_request_auth(client).await?;
+    let model =
+        std::env::var("OPENAI_MODEL").unwrap_or_else(|_| request_auth.default_model.to_string());
     let request = client
         .post(request_auth.url)
         .headers(request_auth.headers)
