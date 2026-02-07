@@ -14,6 +14,12 @@ enum AuthMode {
     Subscription,
 }
 
+pub struct RequestAuth {
+    pub url: &'static str,
+    pub default_model: &'static str,
+    pub headers: HeaderMap,
+}
+
 #[derive(Deserialize)]
 struct CodexAuthFile {
     tokens: Option<CodexTokens>,
@@ -35,20 +41,6 @@ fn auth_mode() -> AuthMode {
     match raw.to_ascii_lowercase().as_str() {
         "subscription" => AuthMode::Subscription,
         _ => AuthMode::ApiKey,
-    }
-}
-
-pub fn request_url() -> &'static str {
-    match auth_mode() {
-        AuthMode::ApiKey => OPENAI_API_URL,
-        AuthMode::Subscription => SUBSCRIPTION_API_URL,
-    }
-}
-
-pub fn default_model() -> &'static str {
-    match auth_mode() {
-        AuthMode::ApiKey => "gpt-4.1-mini",
-        AuthMode::Subscription => "gpt-5.3-codex",
     }
 }
 
@@ -113,36 +105,55 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Re
     Ok(())
 }
 
-pub fn get_headers() -> Result<HeaderMap> {
+fn api_key_headers() -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-
-    match auth_mode() {
-        AuthMode::ApiKey => {
-            let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
-            insert_header(&mut headers, "authorization", &format!("Bearer {key}"))?;
-        }
-        AuthMode::Subscription => {
-            let auth = load_subscription_auth()?;
-            insert_header(
-                &mut headers,
-                AUTHORIZATION.as_str(),
-                &format!("Bearer {}", auth.access_token),
-            )?;
-            insert_header(&mut headers, "chatgpt-account-id", &auth.account_id)?;
-            headers.insert(
-                HeaderName::from_static("openai-beta"),
-                HeaderValue::from_static("responses=experimental"),
-            );
-            headers.insert(
-                HeaderName::from_static("accept"),
-                HeaderValue::from_static("text/event-stream"),
-            );
-            headers.insert(
-                HeaderName::from_static("originator"),
-                HeaderValue::from_static("ox"),
-            );
-        }
-    }
-
+    let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
+    insert_header(&mut headers, "authorization", &format!("Bearer {key}"))?;
     Ok(headers)
+}
+
+fn subscription_headers() -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    let auth = load_subscription_auth()?;
+    insert_header(
+        &mut headers,
+        AUTHORIZATION.as_str(),
+        &format!("Bearer {}", auth.access_token),
+    )?;
+    insert_header(&mut headers, "chatgpt-account-id", &auth.account_id)?;
+    headers.insert(
+        HeaderName::from_static("openai-beta"),
+        HeaderValue::from_static("responses=experimental"),
+    );
+    headers.insert(
+        HeaderName::from_static("accept"),
+        HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(
+        HeaderName::from_static("originator"),
+        HeaderValue::from_static("ox"),
+    );
+    Ok(headers)
+}
+
+pub fn resolve_request_auth() -> Result<RequestAuth> {
+    let mode = auth_mode();
+    let url = match mode {
+        AuthMode::ApiKey => OPENAI_API_URL,
+        AuthMode::Subscription => SUBSCRIPTION_API_URL,
+    };
+    let default_model = match mode {
+        AuthMode::ApiKey => "gpt-4.1-mini",
+        AuthMode::Subscription => "gpt-5.3-codex",
+    };
+    let headers = match mode {
+        AuthMode::ApiKey => api_key_headers()?,
+        AuthMode::Subscription => subscription_headers()?,
+    };
+
+    Ok(RequestAuth {
+        url,
+        default_model,
+        headers,
+    })
 }
