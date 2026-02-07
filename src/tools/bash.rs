@@ -1,4 +1,5 @@
 use super::truncate;
+use super::ToolResult;
 use std::fmt::Write;
 use std::io::Read;
 use std::process::{Command, ExitStatus, Stdio};
@@ -22,42 +23,42 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> String {
+pub fn run(args: &serde_json::Value) -> ToolResult {
     let Some(command) = args["command"].as_str() else {
-        return "Error: missing 'command' argument".to_string();
+        return ToolResult::error("Error: missing 'command' argument");
     };
 
     let timeout = match parse_timeout(args) {
         Ok(timeout) => timeout,
-        Err(err) => return err,
+        Err(err) => return ToolResult::error(err),
     };
 
     let outcome = match execute_command(command, timeout) {
         Ok(outcome) => outcome,
-        Err(err) => return err,
+        Err(err) => return ToolResult::error(err),
     };
 
     let exit_code = outcome.status.code().unwrap_or(-1);
     let result = combine_streams(&outcome.stdout, &outcome.stderr);
 
     if outcome.timed_out {
-        return format_timeout_error(timeout, &result);
+        return ToolResult::error(format_timeout_error(timeout, &result));
     }
 
     if !outcome.status.success() {
         if result.is_empty() {
-            return format!("Error: command exited with code {exit_code}");
+            return ToolResult::error(format!("Error: command exited with code {exit_code}"));
         }
-        return format!(
+        return ToolResult::error(format!(
             "Error: command exited with code {exit_code}\n{}",
             truncate::tail(&result)
-        );
+        ));
     }
 
     if result.is_empty() {
-        format!("Command exited with code {exit_code}")
+        ToolResult::success(format!("Command exited with code {exit_code}"))
     } else {
-        truncate::tail(&result)
+        ToolResult::success(truncate::tail(&result))
     }
 }
 
