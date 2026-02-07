@@ -1,11 +1,13 @@
 mod agent;
 mod api;
+mod app_context;
 mod auth;
 mod cli;
 mod prompt;
 mod session;
 mod tools;
 
+use app_context::AppContext;
 use anyhow::Result;
 use std::io::{self, BufRead, Write};
 use tokio::signal;
@@ -18,10 +20,9 @@ async fn main() -> Result<()> {
         return session::list_sessions();
     }
     let mut session_state = session::open_session(&cli.session_name)?;
+    let app = AppContext::new();
     let stdin = io::stdin();
-    let tool_defs = tools::definitions();
-    let instructions = prompt::build();
-    let client = reqwest::Client::new();
+    eprintln!("Auth mode: {} | model: {}", app.auth.mode_name(), app.auth.model());
 
     loop {
         print!("> ");
@@ -43,7 +44,7 @@ async fn main() -> Result<()> {
         let persist_start = session_state.history_len();
 
         tokio::select! {
-            run_result = agent::run(&client, session_state.history_mut(), &tool_defs, &instructions) => {
+            run_result = agent::run(&app, session_state.history_mut()) => {
                 if let Err(e) = run_result {
                     eprintln!("Error: {e}");
                 }

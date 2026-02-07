@@ -5,6 +5,7 @@ mod stream;
 mod stream_tests;
 
 use crate::api;
+use crate::app_context::AppContext;
 use anyhow::Result;
 use futures::StreamExt;
 use handler::EventHandler;
@@ -13,13 +14,11 @@ use stream::{get_event, parse_event};
 const MAX_TOOL_CALLS: usize = 20;
 
 pub async fn run(
-    client: &reqwest::Client,
+    app: &AppContext,
     history: &mut Vec<serde_json::Value>,
-    tools_defs: &[serde_json::Value],
-    instructions: &str,
 ) -> Result<()> {
     for _ in 0..MAX_TOOL_CALLS {
-        let response = api::call_openai(client, history, tools_defs, instructions).await?;
+        let response = api::call_openai(app, history).await?;
         let has_tool_calls = stream_response(response, history).await?;
         if !has_tool_calls {
             break;

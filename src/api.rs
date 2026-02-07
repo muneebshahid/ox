@@ -1,25 +1,24 @@
-use crate::auth;
+use crate::app_context::AppContext;
 use anyhow::{Context, Result};
 use reqwest::Response;
 
-pub async fn call_openai(
-    client: &reqwest::Client,
-    input: &[serde_json::Value],
-    tools: &[serde_json::Value],
-    instructions: &str,
-) -> Result<Response> {
-    let request_auth = auth::resolve_request_auth(client).await?;
-    let model =
-        std::env::var("OPENAI_MODEL").unwrap_or_else(|_| request_auth.default_model.to_string());
+pub async fn call_openai(app: &AppContext, history: &[serde_json::Value]) -> Result<Response> {
+    let AppContext {
+        client,
+        auth,
+        tool_defs,
+        instructions,
+    } = app;
+    let headers = auth.build_headers(client).await?;
     let request = client
-        .post(request_auth.url)
-        .headers(request_auth.headers)
+        .post(auth.endpoint())
+        .headers(headers)
         .json(&serde_json::json!({
-            "model": model,
+            "model": auth.model(),
             "store": false,
             "instructions": instructions,
-            "input": input,
-            "tools": tools,
+            "input": history,
+            "tools": tool_defs,
             "stream": true
         }));
 

@@ -1,34 +1,24 @@
+mod config;
 mod store;
 mod subscriptions;
 
 use anyhow::{Context, Result};
+use config::AuthMode;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/responses";
-const SUBSCRIPTION_API_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-
-#[derive(Clone, Copy)]
-enum AuthMode {
-    ApiKey,
-    Subscription,
-}
-
-pub struct RequestAuth {
-    pub url: &'static str,
-    pub default_model: &'static str,
-    pub headers: HeaderMap,
-}
+pub use config::AuthConfig;
 
 struct SubscriptionAuth {
     access_token: String,
     account_id: String,
 }
 
-fn auth_mode() -> AuthMode {
-    let raw = std::env::var("AUTH_MODE").unwrap_or_else(|_| "api".to_string());
-    match raw.to_ascii_lowercase().as_str() {
-        "subscription" => AuthMode::Subscription,
-        _ => AuthMode::ApiKey,
+impl AuthConfig {
+    pub async fn build_headers(&self, client: &reqwest::Client) -> Result<HeaderMap> {
+        match self.mode() {
+            AuthMode::ApiKey => api_key_headers(),
+            AuthMode::Subscription => build_subscription_headers(client).await,
+        }
     }
 }
 
@@ -138,26 +128,4 @@ async fn build_subscription_headers(client: &reqwest::Client) -> Result<HeaderMa
         HeaderValue::from_static("ox"),
     );
     Ok(headers)
-}
-
-pub async fn resolve_request_auth(client: &reqwest::Client) -> Result<RequestAuth> {
-    let mode = auth_mode();
-    let url = match mode {
-        AuthMode::ApiKey => OPENAI_API_URL,
-        AuthMode::Subscription => SUBSCRIPTION_API_URL,
-    };
-    let default_model = match mode {
-        AuthMode::ApiKey => "gpt-4.1-mini",
-        AuthMode::Subscription => "gpt-5.3-codex",
-    };
-    let headers = match mode {
-        AuthMode::ApiKey => api_key_headers()?,
-        AuthMode::Subscription => build_subscription_headers(client).await?,
-    };
-
-    Ok(RequestAuth {
-        url,
-        default_model,
-        headers,
-    })
 }
