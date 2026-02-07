@@ -1,5 +1,6 @@
 mod agent;
 mod api;
+mod auth;
 mod cli;
 mod prompt;
 mod session;
