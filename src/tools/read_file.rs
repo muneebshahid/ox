@@ -33,9 +33,7 @@ fn parse_args(args: &serde_json::Value) -> Result<ReadArgs<'_>, String> {
         .and_then(|o| usize::try_from(o.saturating_sub(1)).ok())
         .unwrap_or(0);
 
-    let limit = args["limit"]
-        .as_u64()
-        .and_then(|l| usize::try_from(l).ok());
+    let limit = args["limit"].as_u64().and_then(|l| usize::try_from(l).ok());
 
     Ok(ReadArgs {
         path,
@@ -45,8 +43,7 @@ fn parse_args(args: &serde_json::Value) -> Result<ReadArgs<'_>, String> {
 }
 
 fn execute(args: &ReadArgs) -> Result<String, String> {
-    let content =
-        std::fs::read_to_string(args.path).map_err(|e| format!("Error: {e}"))?;
+    let content = std::fs::read_to_string(args.path).map_err(|e| format!("Error: {e}"))?;
 
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
@@ -63,10 +60,14 @@ fn execute(args: &ReadArgs) -> Result<String, String> {
         .map_or(total_lines, |l| (args.offset + l).min(total_lines));
 
     let selected = lines[args.offset..end].join("\n");
-    let output = truncate::head(&selected, 2000, &format!(
-        "lines remaining, use offset={} to continue",
-        args.offset + 2000 + 1 // next 1-indexed line after truncation
-    ));
+    let output = truncate::head(
+        &selected,
+        2000,
+        &format!(
+            "lines remaining, use offset={} to continue",
+            args.offset + 2000 + 1 // next 1-indexed line after truncation
+        ),
+    );
 
     Ok(output)
 }
@@ -135,7 +136,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         // Create a file with more than 2000 lines
-        let content: String = (1..=2500).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content: String = (1..=2500)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         fs::write(&path, &content).unwrap();
         let result = run(&json!({ "path": path.to_str().unwrap() }));
         assert!(result.contains("truncated"));

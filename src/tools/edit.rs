@@ -154,7 +154,11 @@ fn execute(args: &EditArgs) -> Result<String, String> {
     }
 
     let idx = base.find(&old_text).unwrap();
-    let replaced = format!("{}{new_text}{}", &base[..idx], &base[idx + old_text.len()..]);
+    let replaced = format!(
+        "{}{new_text}{}",
+        &base[..idx],
+        &base[idx + old_text.len()..]
+    );
     if base == replaced {
         return Err(format!(
             "Error: no changes made to {}, old_text and new_text produce identical content",
