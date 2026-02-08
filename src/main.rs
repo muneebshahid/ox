@@ -22,10 +22,12 @@ async fn main() -> Result<()> {
     let mut session_state = session::open_session(&cli.session_name)?;
     let app = AppContext::new();
     let stdin = io::stdin();
+    let reasoning = app.auth.reasoning_effort();
     eprintln!(
-        "Auth mode: {} | model: {}",
+        "Auth mode: {} | model: {} | reasoning: {}",
         app.auth.mode_name(),
-        app.auth.model()
+        app.auth.model(),
+        reasoning
     );
 
     loop {
