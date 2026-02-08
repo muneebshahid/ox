@@ -45,8 +45,7 @@ fn parse_args(args: &serde_json::Value) -> Result<ReadArgs<'_>, String> {
 fn execute(args: &ReadArgs) -> Result<String, String> {
     let content = std::fs::read_to_string(args.path).map_err(|e| format!("Error: {e}"))?;
 
-    let lines: Vec<&str> = content.lines().collect();
-    let total_lines = lines.len();
+    let total_lines = content.lines().count();
 
     if args.offset >= total_lines {
         return Err(format!(
@@ -55,11 +54,16 @@ fn execute(args: &ReadArgs) -> Result<String, String> {
         ));
     }
 
-    let end = args
-        .limit
-        .map_or(total_lines, |l| (args.offset + l).min(total_lines));
+    let remaining = total_lines - args.offset;
+    let take = args.limit.unwrap_or(remaining).min(remaining);
 
-    let selected = lines[args.offset..end].join("\n");
+    let selected: String = content
+        .lines()
+        .skip(args.offset)
+        .take(take)
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let output = truncate::head(
         &selected,
         2000,

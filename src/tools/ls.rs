@@ -33,12 +33,14 @@ fn parse_args(args: &serde_json::Value) -> LsArgs<'_> {
 fn execute(args: &LsArgs) -> Result<Vec<String>, String> {
     let entries = std::fs::read_dir(args.path).map_err(|e| format!("Error: {e}"))?;
 
-    let mut items: Vec<String> = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let suffix = if entry.path().is_dir() { "/" } else { "" };
-        items.push(format!("{name}{suffix}"));
-    }
+    let mut items: Vec<String> = entries
+        .flatten()
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let suffix = if entry.path().is_dir() { "/" } else { "" };
+            format!("{name}{suffix}")
+        })
+        .collect();
     items.sort();
     Ok(items)
 }

@@ -1,3 +1,5 @@
+mod normalize;
+
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
@@ -38,113 +40,18 @@ fn parse_args(args: &serde_json::Value) -> Result<EditArgs<'_>, String> {
     })
 }
 
-/// Strip UTF-8 BOM if present, returning the BOM and remaining text.
-fn strip_bom(content: &str) -> (&str, &str) {
-    content
-        .strip_prefix('\u{FEFF}')
-        .map_or(("", content), |rest| ("\u{FEFF}", rest))
-}
-
-/// Normalize line endings to LF.
-fn normalize_to_lf(text: &str) -> String {
-    text.replace("\r\n", "\n")
-}
-
-/// Detect whether the file uses CRLF line endings.
-fn uses_crlf(text: &str) -> bool {
-    let crlf = text.find("\r\n");
-    let lf = text.find('\n');
-    match (crlf, lf) {
-        (Some(c), Some(l)) => c < l,
-        _ => false,
-    }
-}
-
-/// Restore line endings to CRLF if the original file used them.
-fn restore_line_endings(text: &str, crlf: bool) -> String {
-    if crlf {
-        text.replace('\n', "\r\n")
-    } else {
-        text.to_string()
-    }
-}
-
-/// Normalize unicode special characters to their ASCII equivalents.
-/// Strips trailing whitespace, converts smart quotes, dashes, and spaces.
-fn normalize_special_chars(text: &str) -> String {
-    text.lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace(
-            [
-                '\u{2018}', // left single curly quote
-                '\u{2019}', // right single curly quote
-                '\u{201A}', // low single curly quote
-                '\u{201B}', // reversed single curly quote
-            ],
-            "'",
-        )
-        .replace(
-            [
-                '\u{201C}', // left double curly quote
-                '\u{201D}', // right double curly quote
-                '\u{201E}', // low double curly quote
-                '\u{201F}', // reversed double curly quote
-            ],
-            "\"",
-        )
-        .replace(
-            [
-                '\u{2010}', // hyphen
-                '\u{2011}', // non-breaking hyphen
-                '\u{2012}', // figure dash
-                '\u{2013}', // en dash
-                '\u{2014}', // em dash
-                '\u{2015}', // horizontal bar
-                '\u{2212}', // minus sign
-            ],
-            "-",
-        )
-        .replace(
-            [
-                '\u{00A0}', // non-breaking space
-                '\u{2002}', // en space
-                '\u{2003}', // em space
-                '\u{2004}', // three-per-em space
-                '\u{2005}', // four-per-em space
-                '\u{2006}', // six-per-em space
-                '\u{2007}', // figure space
-                '\u{2008}', // punctuation space
-                '\u{2009}', // thin space
-                '\u{200A}', // hair space
-                '\u{202F}', // narrow non-breaking space
-                '\u{205F}', // medium mathematical space
-                '\u{3000}', // ideographic (CJK) space
-            ],
-            " ",
-        )
-}
-
-fn count_occurrences(content: &str, old_text: &str) -> usize {
-    if old_text.is_empty() {
-        return 0;
-    }
-    content.matches(old_text).count()
-}
-
 fn execute(args: &EditArgs) -> Result<String, String> {
     let raw_content =
         std::fs::read_to_string(args.path).map_err(|e| format!("Error reading file: {e}"))?;
 
-    let (bom, content) = strip_bom(&raw_content);
-    let crlf = uses_crlf(content);
-    let base = normalize_special_chars(&normalize_to_lf(content));
-    let old_text = normalize_special_chars(&normalize_to_lf(args.old_text));
-    let new_text = normalize_to_lf(args.new_text);
+    let (bom, content) = normalize::strip_bom(&raw_content);
+    let crlf = normalize::is_crlf(content);
+    let base = normalize::normalize(content);
+    let old_text = normalize::normalize(args.old_text);
+    let new_text = args.new_text.replace("\r\n", "\n");
 
-    let occurrences = count_occurrences(&base, &old_text);
-    if occurrences == 0 {
+    let occurrences = base.matches(&*old_text).count();
+    if old_text.is_empty() || occurrences == 0 {
         return Err("Error: old_text not found in file".to_string());
     }
     if occurrences > 1 {
@@ -153,12 +60,7 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         ));
     }
 
-    let idx = base.find(&old_text).unwrap();
-    let replaced = format!(
-        "{}{new_text}{}",
-        &base[..idx],
-        &base[idx + old_text.len()..]
-    );
+    let replaced = base.replacen(&*old_text, &new_text, 1);
     if base == replaced {
         return Err(format!(
             "Error: no changes made to {}, old_text and new_text produce identical content",
@@ -166,7 +68,7 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         ));
     }
 
-    let final_content = format!("{bom}{}", restore_line_endings(&replaced, crlf));
+    let final_content = format!("{bom}{}", normalize::restore_line_endings(&replaced, crlf));
     std::fs::write(args.path, final_content).map_err(|e| format!("Error writing file: {e}"))?;
 
     Ok(format!("Successfully edited {}", args.path))
@@ -286,9 +188,7 @@ mod tests {
     fn mixed_special_chars() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        // File has ASCII quotes and hyphens
         fs::write(&path, r#"println!("a-b")"#).unwrap();
-        // LLM sends smart quotes AND en-dash
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "println!(\u{201C}a\u{2013}b\u{201D})",
@@ -303,7 +203,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         fs::write(&path, "fn main() {\n    return 1;\n}").unwrap();
-        // LLM sends non-breaking spaces instead of regular spaces
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "\u{00A0}\u{00A0}\u{00A0}\u{00A0}return 1;",
@@ -318,7 +217,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         fs::write(&path, "hello").unwrap();
-        // new_text intentionally has an em-dash — it should be written as-is
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "hello",
@@ -332,9 +230,7 @@ mod tests {
     fn file_has_smart_quotes_llm_sends_ascii() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        // File itself has smart quotes
         fs::write(&path, "say \u{201C}hello\u{201D}").unwrap();
-        // LLM sends plain ASCII quotes
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "say \"hello\"",
@@ -348,7 +244,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         fs::write(&path, "a  b").unwrap();
-        // LLM sends two different unicode spaces
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "a\u{00A0}\u{2003}b",
@@ -363,7 +258,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
         fs::write(&path, "line1\nline2").unwrap();
-        // LLM sends CRLF in old_text
         let result = run(&json!({
             "path": path.to_str().unwrap(),
             "old_text": "line1\r\nline2",

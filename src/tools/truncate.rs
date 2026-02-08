@@ -1,57 +1,55 @@
-const MAX_LINES: usize = 2000;
-const MAX_BYTES: usize = 50 * 1024; // 50KB
+pub const MAX_LINES: usize = 2000;
+pub const MAX_BYTES: usize = 50 * 1024; // 50KB
+
+/// Count how many items from `iter` fit within `max_lines` and `MAX_BYTES`.
+/// Each item's byte size is its length plus one (for the newline).
+/// Returns `(lines_counted, total_bytes)`.
+fn count_within_limits<'a>(
+    iter: impl Iterator<Item = &'a str>,
+    max_lines: usize,
+) -> (usize, usize) {
+    let mut byte_count = 0;
+    let mut line_count = 0;
+
+    for line in iter {
+        let next_bytes = byte_count + line.len() + 1;
+        if line_count >= max_lines || next_bytes > MAX_BYTES {
+            break;
+        }
+        byte_count = next_bytes;
+        line_count += 1;
+    }
+
+    (line_count, byte_count)
+}
 
 /// Keep the first `max_lines` lines or `MAX_BYTES`, whichever hits first.
 pub fn head(text: &str, max_lines: usize, label: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
+    let (kept, bytes) = count_within_limits(text.lines(), max_lines);
+    let total = text.lines().count();
 
-    if lines.len() <= max_lines && text.len() <= MAX_BYTES {
+    if kept == total {
         return text.to_string();
     }
 
-    let mut byte_count = 0;
-    let mut line_count = 0;
-
-    for line in &lines {
-        let line_bytes = byte_count + line.len() + 1; // +1 for newline
-        if line_count >= max_lines || line_bytes > MAX_BYTES {
-            break;
-        }
-        byte_count = line_bytes;
-        line_count += 1;
-    }
-
-    let truncated = &text[..byte_count];
-    let remaining = lines.len() - line_count;
+    let truncated = &text[..bytes];
+    let remaining = total - kept;
     format!("{truncated}\n... truncated ({remaining} {label})")
 }
 
-/// Keep the last N lines / bytes. Used for command output.
+/// Keep the last `MAX_LINES` lines or `MAX_BYTES`, whichever hits first.
 pub fn tail(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
 
-    if lines.len() <= MAX_LINES && text.len() <= MAX_BYTES {
+    let (kept, _) = count_within_limits(lines.iter().rev().copied(), MAX_LINES);
+
+    if kept == lines.len() {
         return text.to_string();
     }
 
-    // Start from the end, collect lines until we hit limits
-    let mut byte_count = 0;
-    let mut line_count = 0;
+    let omitted = lines.len() - kept;
+    let start = lines[omitted].as_ptr() as usize - text.as_ptr() as usize;
+    let tail_text = &text[start..];
 
-    for line in lines.iter().rev() {
-        let line_bytes = byte_count + line.len() + 1; // +1 for newline
-        if line_count >= MAX_LINES || line_bytes > MAX_BYTES {
-            break;
-        }
-        byte_count = line_bytes;
-        line_count += 1;
-    }
-
-    let omitted = lines.len() - line_count;
-    let kept = &lines[omitted..];
-
-    format!(
-        "... truncated ({omitted} lines omitted)\n{}",
-        kept.join("\n")
-    )
+    format!("... truncated ({omitted} lines omitted)\n{tail_text}")
 }

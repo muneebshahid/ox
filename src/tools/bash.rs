@@ -2,17 +2,13 @@ use super::truncate;
 use std::io::Read;
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-
-const MAX_LINES: usize = 2000;
-const MAX_BYTES: usize = 50 * 1024;
 
 pub fn definition() -> serde_json::Value {
     let description = format!(
         "Execute a shell command and return its output. Output is truncated to the last {} lines or {}KB. If truncated full output is saved to a temp file. Optionally provide timeout in seconds.",
-        MAX_LINES,
-        MAX_BYTES / 1024
+        truncate::MAX_LINES,
+        truncate::MAX_BYTES / 1024
     );
     serde_json::json!({
         "type": "function",
@@ -47,6 +43,11 @@ fn parse_args(args: &serde_json::Value) -> Result<BashArgs<'_>, String> {
     Ok(BashArgs { command, timeout })
 }
 
+struct WaitResult {
+    status: ExitStatus,
+    timed_out: bool,
+}
+
 struct CommandOutcome {
     status: ExitStatus,
     stdout: String,
@@ -66,16 +67,15 @@ fn execute(args: &BashArgs) -> Result<CommandOutcome, String> {
     let stdout_thread = child.stdout.take().map(spawn_reader);
     let stderr_thread = child.stderr.take().map(spawn_reader);
 
-    let mut timed_out = false;
-    let status = wait_for_exit(&mut child, args.timeout, &mut timed_out)?;
+    let result = wait_for_exit(&mut child, args.timeout)?;
     let stdout_bytes = join_reader(stdout_thread);
     let stderr_bytes = join_reader(stderr_thread);
 
     Ok(CommandOutcome {
-        status,
+        status: result.status,
         stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),
         stderr: String::from_utf8_lossy(&stderr_bytes).into_owned(),
-        timed_out,
+        timed_out: result.timed_out,
     })
 }
 
@@ -84,7 +84,8 @@ fn format_output(outcome: &CommandOutcome, timeout: Option<Duration>) -> String 
     let output = combine_streams(&outcome.stdout, &outcome.stderr);
 
     if outcome.timed_out {
-        return format_timeout_error(timeout, &output);
+        // timeout is always Some when timed_out is true
+        return format_timeout_error(timeout.unwrap(), &output);
     }
 
     if !outcome.status.success() {
@@ -121,22 +122,29 @@ pub fn run(args: &serde_json::Value) -> String {
 fn wait_for_exit(
     child: &mut std::process::Child,
     timeout: Option<Duration>,
-    timed_out: &mut bool,
-) -> Result<ExitStatus, String> {
+) -> Result<WaitResult, String> {
     let start = Instant::now();
 
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
+            Ok(Some(status)) => {
+                return Ok(WaitResult {
+                    status,
+                    timed_out: false,
+                });
+            }
             Ok(None) => {
                 if let Some(limit) = timeout
                     && start.elapsed() >= limit
                 {
-                    *timed_out = true;
                     let _ = child.kill();
-                    return child
+                    let status = child
                         .wait()
-                        .map_err(|e| format!("Error: failed waiting for process: {e}"));
+                        .map_err(|e| format!("Error: failed waiting for process: {e}"))?;
+                    return Ok(WaitResult {
+                        status,
+                        timed_out: true,
+                    });
                 }
                 thread::sleep(Duration::from_millis(25));
             }
@@ -145,7 +153,7 @@ fn wait_for_exit(
     }
 }
 
-fn spawn_reader<R>(mut pipe: R) -> JoinHandle<Vec<u8>>
+fn spawn_reader<R>(mut pipe: R) -> thread::JoinHandle<Vec<u8>>
 where
     R: Read + Send + 'static,
 {
@@ -156,7 +164,7 @@ where
     })
 }
 
-fn join_reader(handle: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
+fn join_reader(handle: Option<thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
     handle
         .and_then(|thread| thread.join().ok())
         .unwrap_or_default()
@@ -174,11 +182,13 @@ fn combine_streams(stdout: &str, stderr: &str) -> String {
 /// If output exceeds limits, save full output to a temp file and append the
 /// path to the truncated result so the LLM can `read_file` it.
 fn tail_with_tempfile(text: &str) -> String {
-    if text.lines().count() <= MAX_LINES && text.len() <= MAX_BYTES {
-        return text.to_string();
+    let truncated = truncate::tail(text);
+
+    // truncate::tail returns the input unchanged when within limits
+    if truncated.len() == text.len() {
+        return truncated;
     }
 
-    let truncated = truncate::tail(text);
     match save_to_tempfile(text) {
         Ok(path) => format!("{truncated}\n\n(full output saved to {path})"),
         Err(e) => format!("{truncated}\n\n(failed to save full output: {e})"),
@@ -193,10 +203,10 @@ fn save_to_tempfile(content: &str) -> Result<String, std::io::Error> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn format_timeout_error(timeout: Option<Duration>, output: &str) -> String {
-    let header = timeout.map_or_else(
-        || "Error: command timed out".to_string(),
-        |limit| format!("Error: command timed out after {} seconds", limit.as_secs()),
+fn format_timeout_error(timeout: Duration, output: &str) -> String {
+    let header = format!(
+        "Error: command timed out after {} seconds",
+        timeout.as_secs()
     );
 
     if output.is_empty() {
@@ -279,7 +289,7 @@ mod tests {
     #[test]
     fn large_output_truncated_with_tempfile() {
         // Generate output exceeding MAX_LINES
-        let cmd = format!("seq 1 {}", MAX_LINES + 500);
+        let cmd = format!("seq 1 {}", truncate::MAX_LINES + 500);
         let result = run(&json!({ "command": cmd }));
         assert!(result.contains("full output saved to"));
     }
