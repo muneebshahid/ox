@@ -7,3 +7,6 @@
 - Diff support
 - Reasoning effort support
 - Compaction
+- Hooks
+- Plugin system
+- Workflows
