@@ -15,34 +15,357 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
+struct EditArgs<'a> {
+    path: &'a str,
+    old_text: &'a str,
+    new_text: &'a str,
+}
+
+fn parse_args(args: &serde_json::Value) -> Result<EditArgs<'_>, String> {
+    let path = args["path"]
+        .as_str()
+        .ok_or_else(|| "Error: missing 'path' argument".to_string())?;
+    let old_text = args["old_text"]
+        .as_str()
+        .ok_or_else(|| "Error: missing 'old_text' argument".to_string())?;
+    let new_text = args["new_text"]
+        .as_str()
+        .ok_or_else(|| "Error: missing 'new_text' argument".to_string())?;
+    Ok(EditArgs {
+        path,
+        old_text,
+        new_text,
+    })
+}
+
+/// Strip UTF-8 BOM if present, returning the BOM and remaining text.
+fn strip_bom(content: &str) -> (&str, &str) {
+    content
+        .strip_prefix('\u{FEFF}')
+        .map_or(("", content), |rest| ("\u{FEFF}", rest))
+}
+
+/// Normalize line endings to LF.
+fn normalize_to_lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+/// Detect whether the file uses CRLF line endings.
+fn uses_crlf(text: &str) -> bool {
+    let crlf = text.find("\r\n");
+    let lf = text.find('\n');
+    match (crlf, lf) {
+        (Some(c), Some(l)) => c < l,
+        _ => false,
+    }
+}
+
+/// Restore line endings to CRLF if the original file used them.
+fn restore_line_endings(text: &str, crlf: bool) -> String {
+    if crlf {
+        text.replace('\n', "\r\n")
+    } else {
+        text.to_string()
+    }
+}
+
+/// Normalize unicode special characters to their ASCII equivalents.
+/// Strips trailing whitespace, converts smart quotes, dashes, and spaces.
+fn normalize_special_chars(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace(
+            [
+                '\u{2018}', // left single curly quote
+                '\u{2019}', // right single curly quote
+                '\u{201A}', // low single curly quote
+                '\u{201B}', // reversed single curly quote
+            ],
+            "'",
+        )
+        .replace(
+            [
+                '\u{201C}', // left double curly quote
+                '\u{201D}', // right double curly quote
+                '\u{201E}', // low double curly quote
+                '\u{201F}', // reversed double curly quote
+            ],
+            "\"",
+        )
+        .replace(
+            [
+                '\u{2010}', // hyphen
+                '\u{2011}', // non-breaking hyphen
+                '\u{2012}', // figure dash
+                '\u{2013}', // en dash
+                '\u{2014}', // em dash
+                '\u{2015}', // horizontal bar
+                '\u{2212}', // minus sign
+            ],
+            "-",
+        )
+        .replace(
+            [
+                '\u{00A0}', // non-breaking space
+                '\u{2002}', // en space
+                '\u{2003}', // em space
+                '\u{2004}', // three-per-em space
+                '\u{2005}', // four-per-em space
+                '\u{2006}', // six-per-em space
+                '\u{2007}', // figure space
+                '\u{2008}', // punctuation space
+                '\u{2009}', // thin space
+                '\u{200A}', // hair space
+                '\u{202F}', // narrow non-breaking space
+                '\u{205F}', // medium mathematical space
+                '\u{3000}', // ideographic (CJK) space
+            ],
+            " ",
+        )
+}
+
+fn count_occurrences(content: &str, old_text: &str) -> usize {
+    if old_text.is_empty() {
+        return 0;
+    }
+    content.matches(old_text).count()
+}
+
+fn execute(args: &EditArgs) -> Result<String, String> {
+    let raw_content =
+        std::fs::read_to_string(args.path).map_err(|e| format!("Error reading file: {e}"))?;
+
+    let (bom, content) = strip_bom(&raw_content);
+    let crlf = uses_crlf(content);
+    let base = normalize_special_chars(&normalize_to_lf(content));
+    let old_text = normalize_special_chars(&normalize_to_lf(args.old_text));
+    let new_text = normalize_to_lf(args.new_text);
+
+    let occurrences = count_occurrences(&base, &old_text);
+    if occurrences == 0 {
+        return Err("Error: old_text not found in file".to_string());
+    }
+    if occurrences > 1 {
+        return Err(format!(
+            "Error: old_text found {occurrences} times, include more surrounding context to make it unique"
+        ));
+    }
+
+    let idx = base.find(&old_text).unwrap();
+    let replaced = format!("{}{new_text}{}", &base[..idx], &base[idx + old_text.len()..]);
+    if base == replaced {
+        return Err(format!(
+            "Error: no changes made to {}, old_text and new_text produce identical content",
+            args.path
+        ));
+    }
+
+    let final_content = format!("{bom}{}", restore_line_endings(&replaced, crlf));
+    std::fs::write(args.path, final_content).map_err(|e| format!("Error writing file: {e}"))?;
+
+    Ok(format!("Successfully edited {}", args.path))
+}
+
 pub fn run(args: &serde_json::Value) -> String {
-    let Some(path) = args["path"].as_str() else {
-        return "Error: missing 'path' argument".to_string();
+    let args = match parse_args(args) {
+        Ok(a) => a,
+        Err(e) => return e,
     };
-    let Some(old_text) = args["old_text"].as_str() else {
-        return "Error: missing 'old_text' argument".to_string();
-    };
-    let Some(new_text) = args["new_text"].as_str() else {
-        return "Error: missing 'new_text' argument".to_string();
-    };
+    match execute(&args) {
+        Ok(msg) => msg,
+        Err(e) => e,
+    }
+}
 
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => return format!("Error reading file: {e}"),
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
 
-    let count = content.matches(old_text).count();
-    match count {
-        0 => "Error: old_text not found in file".to_string(),
-        1 => {
-            let new_content = content.replacen(old_text, new_text, 1);
-            match std::fs::write(path, new_content) {
-                Ok(()) => format!("Successfully edited {path}"),
-                Err(e) => format!("Error writing file: {e}"),
-            }
-        }
-        n => format!(
-            "Error: old_text found {n} times, include more surrounding context to make it unique"
-        ),
+    #[test]
+    fn basic_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "hello world").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "hello",
+            "new_text": "goodbye"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "goodbye world");
+    }
+
+    #[test]
+    fn not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "hello world").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "missing",
+            "new_text": "new"
+        }));
+        assert!(result.contains("not found"));
+    }
+
+    #[test]
+    fn multiple_occurrences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "aaa").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "a",
+            "new_text": "b"
+        }));
+        assert!(result.contains("3 times"));
+    }
+
+    #[test]
+    fn preserves_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\r\nline2\r\nline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "line1\r\nchanged\r\nline3"
+        );
+    }
+
+    #[test]
+    fn preserves_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "\u{FEFF}hello world").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "hello",
+            "new_text": "goodbye"
+        }));
+        assert!(result.contains("Successfully edited"));
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with('\u{FEFF}'));
+        assert!(content.contains("goodbye world"));
+    }
+
+    #[test]
+    fn missing_args() {
+        assert!(run(&json!({})).contains("Error"));
+        assert!(run(&json!({"path": "x"})).contains("Error"));
+        assert!(run(&json!({"path": "x", "old_text": "y"})).contains("Error"));
+    }
+
+    #[test]
+    fn no_actual_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "hello").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "hello",
+            "new_text": "hello"
+        }));
+        assert!(result.contains("no changes"));
+    }
+
+    #[test]
+    fn mixed_special_chars() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        // File has ASCII quotes and hyphens
+        fs::write(&path, r#"println!("a-b")"#).unwrap();
+        // LLM sends smart quotes AND en-dash
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "println!(\u{201C}a\u{2013}b\u{201D})",
+            "new_text": "println!(\"x\")"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), r#"println!("x")"#);
+    }
+
+    #[test]
+    fn non_breaking_space_in_indentation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "fn main() {\n    return 1;\n}").unwrap();
+        // LLM sends non-breaking spaces instead of regular spaces
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "\u{00A0}\u{00A0}\u{00A0}\u{00A0}return 1;",
+            "new_text": "    return 2;"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert!(fs::read_to_string(&path).unwrap().contains("return 2;"));
+    }
+
+    #[test]
+    fn special_chars_in_new_text_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "hello").unwrap();
+        // new_text intentionally has an em-dash — it should be written as-is
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "hello",
+            "new_text": "good\u{2014}bye"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "good\u{2014}bye");
+    }
+
+    #[test]
+    fn file_has_smart_quotes_llm_sends_ascii() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        // File itself has smart quotes
+        fs::write(&path, "say \u{201C}hello\u{201D}").unwrap();
+        // LLM sends plain ASCII quotes
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "say \"hello\"",
+            "new_text": "say \"world\""
+        }));
+        assert!(result.contains("Successfully edited"));
+    }
+
+    #[test]
+    fn consecutive_special_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "a  b").unwrap();
+        // LLM sends two different unicode spaces
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "a\u{00A0}\u{2003}b",
+            "new_text": "a b"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a b");
+    }
+
+    #[test]
+    fn crlf_in_old_text_matches_lf_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\nline2").unwrap();
+        // LLM sends CRLF in old_text
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line1\r\nline2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
     }
 }
