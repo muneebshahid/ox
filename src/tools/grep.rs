@@ -44,7 +44,10 @@ fn parse_args(args: &serde_json::Value) -> Result<GrepArgs<'_>, String> {
         ignore_case: args["ignore_case"].as_bool().unwrap_or(false),
         literal: args["literal"].as_bool().unwrap_or(false),
         context: args["context"].as_u64(),
-        limit: usize::try_from(args["limit"].as_u64().unwrap_or(100)).unwrap_or(100),
+        limit: args["limit"]
+            .as_u64()
+            .and_then(|l| usize::try_from(l).ok())
+            .unwrap_or(100),
     })
 }
 

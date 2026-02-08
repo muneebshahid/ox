@@ -32,7 +32,10 @@ fn parse_args(args: &serde_json::Value) -> Result<FindArgs<'_>, String> {
     Ok(FindArgs {
         pattern,
         path: args["path"].as_str().unwrap_or("."),
-        limit: usize::try_from(args["limit"].as_u64().unwrap_or(1000)).unwrap_or(1000),
+        limit: args["limit"]
+            .as_u64()
+            .and_then(|l| usize::try_from(l).ok())
+            .unwrap_or(1000),
     })
 }
 
