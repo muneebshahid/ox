@@ -2,7 +2,7 @@ pub fn definition() -> serde_json::Value {
     serde_json::json!({
         "type": "function",
         "name": "write_file",
-        "description": "Write content to a file, creating it if it doesn't exist or overwriting if it does",
+        "description": "Write content to a file, creating it and any parent directories if they don't exist, or overwriting if it does.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -21,6 +21,11 @@ pub fn run(args: &serde_json::Value) -> String {
     let Some(content) = args["content"].as_str() else {
         return "Error: missing 'content' argument".to_string();
     };
+    if let Some(parent) = std::path::Path::new(path).parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return format!("Error creating directories: {e}");
+    }
     match std::fs::write(path, content) {
         Ok(()) => format!("Successfully wrote to {path}"),
         Err(e) => format!("Error: {e}"),

@@ -40,8 +40,8 @@ impl AuthConfig {
     pub fn from_env() -> Self {
         let mode = AuthMode::from_env_value(std::env::var("AUTH_MODE").ok().as_deref());
         let profile = auth_profile(mode);
-        let model = std::env::var("OPENAI_MODEL")
-            .unwrap_or_else(|_| profile.default_model.to_string());
+        let model =
+            std::env::var("OPENAI_MODEL").unwrap_or_else(|_| profile.default_model.to_string());
         Self {
             mode,
             url: profile.url,

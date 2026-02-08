@@ -109,9 +109,21 @@ mod tests {
 
     fn setup_test_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("hello.rs"), "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
-        fs::write(dir.path().join("lib.rs"), "pub fn greet() {\n    println!(\"hello world\");\n}\n").unwrap();
-        fs::write(dir.path().join("notes.txt"), "Hello there\nhello again\nGoodbye\n").unwrap();
+        fs::write(
+            dir.path().join("hello.rs"),
+            "fn main() {\n    println!(\"Hello\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn greet() {\n    println!(\"hello world\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("notes.txt"),
+            "Hello there\nhello again\nGoodbye\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -218,7 +230,8 @@ mod tests {
             "limit": 1
         }));
         // Should only have 1 matching line
-        let match_lines: Vec<&str> = result.lines()
+        let match_lines: Vec<&str> = result
+            .lines()
             .filter(|l| l.contains("hello") || l.contains("Hello"))
             .collect();
         assert_eq!(match_lines.len(), 1);

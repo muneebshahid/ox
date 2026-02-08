@@ -7,8 +7,8 @@ mod prompt;
 mod session;
 mod tools;
 
-use app_context::AppContext;
 use anyhow::Result;
+use app_context::AppContext;
 use std::io::{self, BufRead, Write};
 use tokio::signal;
 
@@ -22,7 +22,11 @@ async fn main() -> Result<()> {
     let mut session_state = session::open_session(&cli.session_name)?;
     let app = AppContext::new();
     let stdin = io::stdin();
-    eprintln!("Auth mode: {} | model: {}", app.auth.mode_name(), app.auth.model());
+    eprintln!(
+        "Auth mode: {} | model: {}",
+        app.auth.mode_name(),
+        app.auth.model()
+    );
 
     loop {
         print!("> ");
