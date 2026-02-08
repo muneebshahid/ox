@@ -1,5 +1,4 @@
 use super::truncate;
-use std::fmt::Write;
 use std::io::Read;
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
@@ -42,7 +41,7 @@ fn parse_args(args: &serde_json::Value) -> Result<BashArgs<'_>, String> {
 
     let timeout = args["timeout"]
         .as_u64()
-        .filter(|&s| s > 0)
+        .filter(|&secs| secs > 0)
         .map(Duration::from_secs);
 
     Ok(BashArgs { command, timeout })
@@ -82,26 +81,26 @@ fn execute(args: &BashArgs) -> Result<CommandOutcome, String> {
 
 fn format_output(outcome: &CommandOutcome, timeout: Option<Duration>) -> String {
     let exit_code = outcome.status.code().unwrap_or(-1);
-    let result = combine_streams(&outcome.stdout, &outcome.stderr);
+    let output = combine_streams(&outcome.stdout, &outcome.stderr);
 
     if outcome.timed_out {
-        return format_timeout_error(timeout, &result);
+        return format_timeout_error(timeout, &output);
     }
 
     if !outcome.status.success() {
-        if result.is_empty() {
+        if output.is_empty() {
             return format!("Error: command exited with code {exit_code}");
         }
         return format!(
             "Error: command exited with code {exit_code}\n{}",
-            tail_with_tempfile(&result)
+            tail_with_tempfile(&output)
         );
     }
 
-    if result.is_empty() {
+    if output.is_empty() {
         format!("Command exited with code {exit_code}")
     } else {
-        tail_with_tempfile(&result)
+        tail_with_tempfile(&output)
     }
 }
 
@@ -164,17 +163,12 @@ fn join_reader(handle: Option<JoinHandle<Vec<u8>>>) -> Vec<u8> {
 }
 
 fn combine_streams(stdout: &str, stderr: &str) -> String {
-    let mut result = String::new();
-    if !stdout.is_empty() {
-        result.push_str(stdout);
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => stdout.to_string(),
+        (true, false) => format!("stderr: {stderr}"),
+        (false, false) => format!("{stdout}\nstderr: {stderr}"),
     }
-    if !stderr.is_empty() {
-        if !result.is_empty() {
-            result.push('\n');
-        }
-        let _ = write!(result, "stderr: {stderr}");
-    }
-    result
 }
 
 /// If output exceeds limits, save full output to a temp file and append the
@@ -199,24 +193,17 @@ fn save_to_tempfile(content: &str) -> Result<String, std::io::Error> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-fn format_timeout_error(timeout: Option<Duration>, result: &str) -> String {
-    if result.is_empty() {
-        return timeout.map_or_else(
-            || "Error: command timed out".to_string(),
-            |limit| format!("Error: command timed out after {} seconds", limit.as_secs()),
-        );
-    }
+fn format_timeout_error(timeout: Option<Duration>, output: &str) -> String {
+    let header = timeout.map_or_else(
+        || "Error: command timed out".to_string(),
+        |limit| format!("Error: command timed out after {} seconds", limit.as_secs()),
+    );
 
-    timeout.map_or_else(
-        || format!("Error: command timed out\n{}", tail_with_tempfile(result)),
-        |limit| {
-            format!(
-                "Error: command timed out after {} seconds\n{}",
-                limit.as_secs(),
-                tail_with_tempfile(result)
-            )
-        },
-    )
+    if output.is_empty() {
+        header
+    } else {
+        format!("{header}\n{}", tail_with_tempfile(output))
+    }
 }
 
 #[cfg(test)]
