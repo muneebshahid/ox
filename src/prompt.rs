@@ -48,16 +48,6 @@ fn current_datetime() -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_current_datetime() {
-        println!("{}", current_datetime());
-    }
-}
-
 pub fn build() -> String {
     let cwd_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let cwd = cwd_path.to_string_lossy().to_string();
