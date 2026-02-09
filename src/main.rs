@@ -7,8 +7,8 @@ mod prompt;
 mod session;
 mod tools;
 
-use app_context::AppContext;
 use anyhow::Result;
+use app_context::AppContext;
 use std::io::{self, BufRead, Write};
 use tokio::signal;
 
@@ -22,7 +22,13 @@ async fn main() -> Result<()> {
     let mut session_state = session::open_session(&cli.session_name)?;
     let app = AppContext::new();
     let stdin = io::stdin();
-    eprintln!("Auth mode: {} | model: {}", app.auth.mode_name(), app.auth.model());
+    let reasoning = app.auth.reasoning_setting();
+    eprintln!(
+        "Auth mode: {} | model: {} | reasoning: {}",
+        app.auth.mode_name(),
+        app.auth.model(),
+        reasoning
+    );
 
     loop {
         print!("> ");
@@ -41,10 +47,11 @@ async fn main() -> Result<()> {
             "content": input
         }))?;
 
+        let session_id = session_state.session_name().to_string();
         let persist_start = session_state.history_len();
 
         tokio::select! {
-            run_result = agent::run(&app, session_state.history_mut()) => {
+            run_result = agent::run(&app, session_state.history_mut(), &session_id) => {
                 if let Err(e) = run_result {
                     eprintln!("Error: {e}");
                 }

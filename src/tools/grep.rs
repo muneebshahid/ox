@@ -1,4 +1,5 @@
 use super::truncate;
+use std::process::Command;
 
 pub fn definition() -> serde_json::Value {
     serde_json::json!({
@@ -21,49 +22,86 @@ pub fn definition() -> serde_json::Value {
     })
 }
 
-pub fn run(args: &serde_json::Value) -> String {
-    let Some(pattern) = args["pattern"].as_str() else {
-        return "Error: missing 'pattern' argument".to_string();
-    };
-    let path = args["path"].as_str().unwrap_or(".");
+struct GrepArgs<'a> {
+    pattern: &'a str,
+    path: &'a str,
+    glob: Option<&'a str>,
+    ignore_case: bool,
+    literal: bool,
+    context: Option<u64>,
+    limit: usize,
+}
 
-    let mut cmd = std::process::Command::new("rg");
+fn parse_args(args: &serde_json::Value) -> Result<GrepArgs<'_>, String> {
+    let pattern = args["pattern"]
+        .as_str()
+        .ok_or_else(|| "Error: missing 'pattern' argument".to_string())?;
+
+    Ok(GrepArgs {
+        pattern,
+        path: args["path"].as_str().unwrap_or("."),
+        glob: args["glob"].as_str(),
+        ignore_case: args["ignore_case"].as_bool().unwrap_or(false),
+        literal: args["literal"].as_bool().unwrap_or(false),
+        context: args["context"].as_u64(),
+        limit: args["limit"]
+            .as_u64()
+            .and_then(|l| usize::try_from(l).ok())
+            .unwrap_or(100),
+    })
+}
+
+fn execute(args: &GrepArgs) -> Result<String, String> {
+    let mut cmd = Command::new("rg");
     cmd.args(["-n", "--no-heading"]);
 
-    if args["ignore_case"].as_bool().unwrap_or(false) {
+    if args.ignore_case {
         cmd.arg("-i");
     }
-    if args["literal"].as_bool().unwrap_or(false) {
+    if args.literal {
         cmd.arg("-F");
     }
-    if let Some(glob) = args["glob"].as_str() {
+    if let Some(glob) = args.glob {
         cmd.args(["--glob", glob]);
     }
-    if let Some(ctx) = args["context"].as_u64() {
+    if let Some(ctx) = args.context {
         cmd.args(["-C", &ctx.to_string()]);
     }
 
-    let limit = args["limit"].as_u64().unwrap_or(100) as usize;
+    cmd.args([args.pattern, args.path]);
 
-    cmd.args([pattern, path]);
+    let output = cmd
+        .output()
+        .or_else(|_| {
+            Command::new("grep")
+                .args(["-rn", args.pattern, args.path])
+                .output()
+        })
+        .map_err(|e| format!("Error: {e}"))?;
 
-    let result = cmd.output().or_else(|_| {
-        std::process::Command::new("grep")
-            .args(["-rn", pattern, path])
-            .output()
-    });
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
 
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.is_empty() {
-                format!("No matches found for '{pattern}'")
-            } else {
-                truncate::head(&stdout, limit, "matches remaining")
-            }
-        }
-        Err(e) => format!("Error: {e}"),
+fn format_output(stdout: &str, pattern: &str, limit: usize) -> String {
+    if stdout.is_empty() {
+        format!("No matches found for '{pattern}'")
+    } else {
+        truncate::head(stdout, limit, "matches remaining")
     }
+}
+
+pub fn run(args: &serde_json::Value) -> String {
+    let args = match parse_args(args) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+
+    let stdout = match execute(&args) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+
+    format_output(&stdout, args.pattern, args.limit)
 }
 
 #[cfg(test)]
@@ -74,9 +112,21 @@ mod tests {
 
     fn setup_test_dir() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("hello.rs"), "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
-        fs::write(dir.path().join("lib.rs"), "pub fn greet() {\n    println!(\"hello world\");\n}\n").unwrap();
-        fs::write(dir.path().join("notes.txt"), "Hello there\nhello again\nGoodbye\n").unwrap();
+        fs::write(
+            dir.path().join("hello.rs"),
+            "fn main() {\n    println!(\"Hello\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn greet() {\n    println!(\"hello world\");\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("notes.txt"),
+            "Hello there\nhello again\nGoodbye\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -183,7 +233,8 @@ mod tests {
             "limit": 1
         }));
         // Should only have 1 matching line
-        let match_lines: Vec<&str> = result.lines()
+        let match_lines: Vec<&str> = result
+            .lines()
             .filter(|l| l.contains("hello") || l.contains("Hello"))
             .collect();
         assert_eq!(match_lines.len(), 1);
