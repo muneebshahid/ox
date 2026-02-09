@@ -1,4 +1,4 @@
-use super::events::{OutputItem, OutputItemKind, StreamEvent};
+use super::events::{StreamEvent, parse_function_call_item};
 use crate::tools;
 use anyhow::Result;
 use std::io::{self, Write};
@@ -31,9 +31,14 @@ impl<'a> EventHandler<'a> {
         self.has_tool_calls
     }
 
-    fn handle_output_item_added(item: &OutputItem) {
-        if let OutputItemKind::FunctionCall { name, .. } = &item.parsed {
-            println!("Calling {}...", name.as_deref().unwrap_or("unknown"));
+    fn handle_output_item_added(item: &serde_json::Value) {
+        if let Some(call) = parse_function_call_item(item) {
+            let name = if call.name.is_empty() {
+                "unknown"
+            } else {
+                call.name.as_str()
+            };
+            println!("Calling {}...", name);
         }
     }
 
@@ -43,60 +48,35 @@ impl<'a> EventHandler<'a> {
         Ok(())
     }
 
-    fn handle_output_item_done(&mut self, item: &OutputItem) {
-        match &item.parsed {
-            OutputItemKind::Message { .. } => self.handle_output_message(item),
-            OutputItemKind::FunctionCall { .. } => self.handle_output_function_call(item),
-            OutputItemKind::Reasoning => self.handle_output_reasoning(item),
-            OutputItemKind::Other => {}
+    fn handle_output_item_done(&mut self, item: &serde_json::Value) {
+        match item.get("type").and_then(serde_json::Value::as_str) {
+            Some("message") | Some("reasoning") => self.history.push(item.clone()),
+            Some("function_call") => self.handle_output_function_call(item),
+            _ => {}
         }
     }
 
-    fn handle_output_message(&mut self, item: &OutputItem) {
-        println!();
-        let text = match &item.parsed {
-            OutputItemKind::Message { content } => content
-                .first()
-                .and_then(|part| part.text.as_deref())
-                .unwrap_or(""),
-            _ => "",
+    fn handle_output_function_call(&mut self, item: &serde_json::Value) {
+        let Some(call) = parse_function_call_item(item) else {
+            return;
         };
-        self.history.push(serde_json::json!({
-            "role": "assistant",
-            "content": text
-        }));
-    }
 
-    fn handle_output_function_call(&mut self, item: &OutputItem) {
-        let (call_id, name, arguments) = match &item.parsed {
-            OutputItemKind::FunctionCall {
-                call_id,
-                name,
-                arguments,
-            } => (
-                call_id.as_deref().unwrap_or(""),
-                name.as_deref().unwrap_or(""),
-                arguments.as_deref().unwrap_or(""),
-            ),
-            _ => ("", "", ""),
+        let call_id = call.call_id;
+        let name = call.name;
+        let arguments = match call.arguments {
+            serde_json::Value::String(value) => value,
+            serde_json::Value::Null => String::new(),
+            value => value.to_string(),
         };
-        let result = tools::execute(name, arguments);
-        self.history.push(serde_json::json!({
-            "type": "function_call",
-            "call_id": call_id,
-            "name": name,
-            "arguments": arguments
-        }));
+
+        let result = tools::execute(&name, &arguments);
+        self.history.push(item.clone());
         self.history.push(serde_json::json!({
             "type": "function_call_output",
             "call_id": call_id,
             "output": result
         }));
         self.has_tool_calls = true;
-    }
-
-    fn handle_output_reasoning(&mut self, item: &OutputItem) {
-        self.history.push(item.raw.clone());
     }
 }
 
