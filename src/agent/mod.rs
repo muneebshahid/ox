@@ -1,14 +1,14 @@
+mod event_handler;
 mod events;
-mod handler;
 mod stream;
 #[cfg(test)]
 mod stream_tests;
 
 use crate::api;
 use crate::app_context::AppContext;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use event_handler::EventHandler;
 use futures::StreamExt;
-use handler::EventHandler;
 use stream::{get_event, parse_event};
 
 const MAX_TOOL_CALLS: usize = 20;
@@ -34,20 +34,33 @@ async fn stream_response(
 ) -> Result<bool> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
-    let mut event_handler = EventHandler::new(history);
+    let mut staged_history = Vec::new();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    let has_tool_calls = {
+        let mut handler = EventHandler::new(&mut staged_history);
 
-        while let Some(data) = get_event(&mut buffer) {
-            let Some(event) = parse_event(&data) else {
-                continue;
-            };
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-            event_handler.handle_event(event)?;
+            while let Some(data) = get_event(&mut buffer) {
+                let Some(event) = parse_event(&data) else {
+                    continue;
+                };
+                handler.handle_event(event)?;
+            }
         }
-    }
 
-    Ok(event_handler.has_tool_calls())
+        if let Some(message) = handler.failure_message() {
+            return Err(anyhow!("stream failed: {message}"));
+        }
+        if !handler.saw_completed() {
+            return Err(anyhow!("stream closed before response.completed"));
+        }
+
+        handler.has_tool_calls()
+    };
+
+    history.extend(staged_history);
+    Ok(has_tool_calls)
 }

@@ -51,3 +51,31 @@ fn parse_event_accepts_known_event() {
     let event = parse_event(data).expect("event should parse");
     assert!(matches!(event, StreamEvent::TextDelta { .. }));
 }
+
+#[test]
+fn parse_event_accepts_response_completed() {
+    let data = r#"{"type":"response.completed","response":{"status":"completed"}}"#;
+    let event = parse_event(data).expect("event should parse");
+    assert!(matches!(event, StreamEvent::ResponseCompleted { .. }));
+}
+
+#[test]
+fn parse_event_accepts_response_done() {
+    let data = r#"{"type":"response.done","response":{"status":"completed"}}"#;
+    let event = parse_event(data).expect("event should parse");
+    assert!(matches!(event, StreamEvent::ResponseDone { .. }));
+}
+
+#[test]
+fn parse_event_accepts_response_failed() {
+    let data = r#"{"type":"response.failed","response":{"status":"failed","error":{"code":"x","message":"y"}}}"#;
+    let event = parse_event(data).expect("event should parse");
+    assert!(matches!(event, StreamEvent::ResponseFailed { .. }));
+}
+
+#[test]
+fn parse_event_accepts_error() {
+    let data = r#"{"type":"error","code":"server_error","message":"oops"}"#;
+    let event = parse_event(data).expect("event should parse");
+    assert!(matches!(event, StreamEvent::Error { .. }));
+}
