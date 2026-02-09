@@ -3,7 +3,11 @@ use anyhow::{Context, Result};
 use reqwest::Response;
 use serde_json::json;
 
-pub async fn call_openai(app: &AppContext, history: &[serde_json::Value]) -> Result<Response> {
+pub async fn call_openai(
+    app: &AppContext,
+    history: &[serde_json::Value],
+    session_id: &str,
+) -> Result<Response> {
     let AppContext {
         client,
         auth,
@@ -18,6 +22,7 @@ pub async fn call_openai(app: &AppContext, history: &[serde_json::Value]) -> Res
         "input": history,
         "tools": tool_defs,
         "stream": true,
+        "prompt_cache_key": session_id,
         "reasoning": {
             "effort": auth.reasoning_effort(),
             "summary": "auto"

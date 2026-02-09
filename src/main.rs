@@ -47,10 +47,11 @@ async fn main() -> Result<()> {
             "content": input
         }))?;
 
+        let session_id = session_state.session_name().to_string();
         let persist_start = session_state.history_len();
 
         tokio::select! {
-            run_result = agent::run(&app, session_state.history_mut()) => {
+            run_result = agent::run(&app, session_state.history_mut(), &session_id) => {
                 if let Err(e) = run_result {
                     eprintln!("Error: {e}");
                 }

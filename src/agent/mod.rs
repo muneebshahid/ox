@@ -13,9 +13,13 @@ use stream::{get_event, parse_event};
 
 const MAX_TOOL_CALLS: usize = 20;
 
-pub async fn run(app: &AppContext, history: &mut Vec<serde_json::Value>) -> Result<()> {
+pub async fn run(
+    app: &AppContext,
+    history: &mut Vec<serde_json::Value>,
+    session_id: &str,
+) -> Result<()> {
     for _ in 0..MAX_TOOL_CALLS {
-        let response = api::call_openai(app, history).await?;
+        let response = api::call_openai(app, history, session_id).await?;
         let has_tool_calls = stream_response(response, history).await?;
         if !has_tool_calls {
             break;
