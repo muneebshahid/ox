@@ -86,6 +86,51 @@ mod tests {
     use crate::agent::events::StreamEvent;
 
     #[test]
+    fn stores_function_call_and_output_in_history() {
+        let mut history = Vec::new();
+        let mut handler = EventHandler::new(&mut history);
+
+        handler
+            .handle_event(
+                serde_json::from_str::<StreamEvent>(
+                    r#"{
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "function_call",
+                            "id": "fc_test",
+                            "call_id": "call_test",
+                            "name": "unknown_tool",
+                            "arguments": "{}"
+                        }
+                    }"#,
+                )
+                .expect("parse function call event"),
+            )
+            .expect("handle function call event");
+
+        assert!(handler.has_tool_calls());
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history[0],
+            serde_json::json!({
+                "type": "function_call",
+                "id": "fc_test",
+                "call_id": "call_test",
+                "name": "unknown_tool",
+                "arguments": "{}"
+            })
+        );
+        assert_eq!(
+            history[1],
+            serde_json::json!({
+                "type": "function_call_output",
+                "call_id": "call_test",
+                "output": "Unknown tool: unknown_tool"
+            })
+        );
+    }
+
+    #[test]
     fn stores_reasoning_item_in_history() {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history);
