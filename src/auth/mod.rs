@@ -14,10 +14,14 @@ struct SubscriptionAuth {
 }
 
 impl AuthConfig {
-    pub async fn build_headers(&self, client: &reqwest::Client) -> Result<HeaderMap> {
+    pub async fn build_headers(
+        &self,
+        client: &reqwest::Client,
+        session_id: &str,
+    ) -> Result<HeaderMap> {
         match self.mode() {
-            AuthMode::ApiKey => api_key_headers(),
-            AuthMode::Subscription => build_subscription_headers(client).await,
+            AuthMode::ApiKey => api_key_headers(session_id),
+            AuthMode::Subscription => build_subscription_headers(client, session_id).await,
         }
     }
 }
@@ -95,7 +99,7 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Re
     Ok(())
 }
 
-fn api_key_headers() -> Result<HeaderMap> {
+fn api_key_headers(session_id: &str) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     let key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY not set")?;
     insert_header(
@@ -103,10 +107,14 @@ fn api_key_headers() -> Result<HeaderMap> {
         AUTHORIZATION.as_str(),
         &format!("Bearer {key}"),
     )?;
+    insert_header(&mut headers, "session_id", session_id)?;
     Ok(headers)
 }
 
-async fn build_subscription_headers(client: &reqwest::Client) -> Result<HeaderMap> {
+async fn build_subscription_headers(
+    client: &reqwest::Client,
+    session_id: &str,
+) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     let auth = load_subscription_auth(client).await?;
     insert_header(
@@ -114,6 +122,7 @@ async fn build_subscription_headers(client: &reqwest::Client) -> Result<HeaderMa
         AUTHORIZATION.as_str(),
         &format!("Bearer {}", auth.access_token),
     )?;
+    insert_header(&mut headers, "session_id", session_id)?;
     insert_header(&mut headers, "chatgpt-account-id", &auth.account_id)?;
     headers.insert(
         HeaderName::from_static("openai-beta"),

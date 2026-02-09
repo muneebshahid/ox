@@ -14,7 +14,7 @@ pub async fn call_openai(
         tool_defs,
         instructions,
     } = app;
-    let headers = auth.build_headers(client).await?;
+    let headers = auth.build_headers(client, session_id).await?;
     let payload = json!({
         "model": auth.model(),
         "store": false,
