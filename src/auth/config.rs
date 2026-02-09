@@ -9,6 +9,7 @@ pub(super) enum AuthMode {
 
 #[derive(Clone, Copy)]
 enum ReasoningEffort {
+    Off,
     Minimal,
     Low,
     Medium,
@@ -49,24 +50,35 @@ impl AuthMode {
 impl ReasoningEffort {
     fn from_env_value(raw: Option<&str>) -> Self {
         match raw.unwrap_or("").to_ascii_lowercase().as_str() {
+            "off" | "none" => Self::Off,
             "minimal" => Self::Minimal,
             "low" => Self::Low,
-            "medium" => Self::Medium,
             "high" => Self::High,
             "xhigh" => Self::XHigh,
-            // Reasoning is always on for ox; fallback is medium.
-            "off" | "none" | "" => Self::Medium,
+            // Default (and fallback) is medium.
             _ => Self::Medium,
         }
     }
 
-    const fn as_str(self) -> &'static str {
+    const fn as_env_str(self) -> &'static str {
         match self {
+            Self::Off => "off",
             Self::Minimal => "minimal",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+        }
+    }
+
+    const fn as_api_effort(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Minimal => Some("minimal"),
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+            Self::XHigh => Some("xhigh"),
         }
     }
 }
@@ -99,8 +111,12 @@ impl AuthConfig {
         self.url
     }
 
-    pub const fn reasoning_effort(&self) -> &'static str {
-        self.reasoning_effort.as_str()
+    pub const fn reasoning_effort(&self) -> Option<&'static str> {
+        self.reasoning_effort.as_api_effort()
+    }
+
+    pub const fn reasoning_setting(&self) -> &'static str {
+        self.reasoning_effort.as_env_str()
     }
 
     pub(super) const fn mode(&self) -> AuthMode {
@@ -128,42 +144,52 @@ mod tests {
     #[test]
     fn parses_reasoning_effort_values() {
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("minimal")).as_str(),
+            ReasoningEffort::from_env_value(Some("minimal")).as_env_str(),
             "minimal"
         );
-        assert_eq!(ReasoningEffort::from_env_value(Some("low")).as_str(), "low");
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("medium")).as_str(),
+            ReasoningEffort::from_env_value(Some("low")).as_env_str(),
+            "low"
+        );
+        assert_eq!(
+            ReasoningEffort::from_env_value(Some("medium")).as_env_str(),
             "medium"
         );
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("high")).as_str(),
+            ReasoningEffort::from_env_value(Some("high")).as_env_str(),
             "high"
         );
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("xhigh")).as_str(),
+            ReasoningEffort::from_env_value(Some("xhigh")).as_env_str(),
             "xhigh"
         );
     }
 
     #[test]
-    fn defaults_to_medium_for_empty_or_off() {
+    fn parses_off_or_none_as_off() {
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("off")).as_str(),
-            "medium"
+            ReasoningEffort::from_env_value(Some("off")).as_env_str(),
+            "off"
         );
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("none")).as_str(),
+            ReasoningEffort::from_env_value(Some("none")).as_env_str(),
+            "off"
+        );
+    }
+
+    #[test]
+    fn defaults_to_medium_for_empty() {
+        assert_eq!(
+            ReasoningEffort::from_env_value(Some("")).as_env_str(),
             "medium"
         );
-        assert_eq!(ReasoningEffort::from_env_value(Some("")).as_str(), "medium");
-        assert_eq!(ReasoningEffort::from_env_value(None).as_str(), "medium");
+        assert_eq!(ReasoningEffort::from_env_value(None).as_env_str(), "medium");
     }
 
     #[test]
     fn defaults_to_medium_for_invalid_value() {
         assert_eq!(
-            ReasoningEffort::from_env_value(Some("definitely-not-valid")).as_str(),
+            ReasoningEffort::from_env_value(Some("definitely-not-valid")).as_env_str(),
             "medium"
         );
     }

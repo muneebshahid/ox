@@ -15,20 +15,25 @@ pub async fn call_openai(
         instructions,
     } = app;
     let headers = auth.build_headers(client, session_id).await?;
-    let payload = json!({
+
+    // Create payload
+    let mut payload = json!({
         "model": auth.model(),
         "store": false,
         "instructions": instructions,
         "input": history,
         "tools": tool_defs,
         "stream": true,
-        "include": ["reasoning.encrypted_content"],
         "prompt_cache_key": session_id,
-        "reasoning": {
-            "effort": auth.reasoning_effort(),
-            "summary": "auto"
-        }
     });
+    if let Some(effort) = auth.reasoning_effort() {
+        payload["include"] = json!(["reasoning.encrypted_content"]);
+        payload["reasoning"] = json!({
+            "effort": effort,
+            "summary": "auto"
+        });
+    }
+
     let request = client.post(auth.endpoint()).headers(headers).json(&payload);
 
     let response = request

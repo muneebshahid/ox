@@ -19,8 +19,8 @@ AUTH_MODE=api
 OPENAI_API_KEY=sk-...
 # optional override; default in api mode is gpt-4.1-mini
 OPENAI_MODEL=gpt-4.1-mini
-# reasoning effort (always enabled):
-# minimal|low|medium|high|xhigh
+# reasoning effort:
+# off|none|minimal|low|medium|high|xhigh
 # if unset or invalid, defaults to medium
 OPENAI_REASONING=medium
 ```
@@ -37,8 +37,8 @@ codex login
 AUTH_MODE=subscription
 # optional override; default in subscription mode is gpt-5.3-codex
 OPENAI_MODEL=gpt-5.3-codex
-# reasoning effort (always enabled):
-# minimal|low|medium|high|xhigh
+# reasoning effort:
+# off|none|minimal|low|medium|high|xhigh
 # if unset or invalid, defaults to medium
 OPENAI_REASONING=high
 ```
