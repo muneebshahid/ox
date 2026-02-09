@@ -22,6 +22,7 @@ pub async fn call_openai(
         "input": history,
         "tools": tool_defs,
         "stream": true,
+        "include": ["reasoning.encrypted_content"],
         "prompt_cache_key": session_id,
         "reasoning": {
             "effort": auth.reasoning_effort(),
