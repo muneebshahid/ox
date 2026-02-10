@@ -50,6 +50,10 @@ fn execute(args: &EditArgs) -> Result<String, String> {
     let mut old_text = normalize::normalize_line_endings_to_lf(args.old_text);
     let new_text = normalize::normalize_line_endings_to_lf(args.new_text);
 
+    if old_text.is_empty() {
+        return Err("Error: old_text not found in file".to_string());
+    }
+
     let mut occurrences = base.matches(&*old_text).count();
     if occurrences == 0 {
         base = normalize::replace_special_chars(&base);
@@ -57,7 +61,7 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         occurrences = base.matches(&*old_text).count();
     }
 
-    if old_text.is_empty() || occurrences == 0 {
+    if occurrences == 0 {
         return Err("Error: old_text not found in file".to_string());
     }
     if occurrences > 1 {

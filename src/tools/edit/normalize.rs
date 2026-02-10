@@ -18,21 +18,18 @@ pub fn strip_bom(content: &str) -> (&str, &str) {
 /// Defaults to LF when no line ending is present.
 pub fn detect_line_ending(text: &str) -> LineEnding {
     let bytes = text.as_bytes();
-    let mut idx = 0;
-
-    while idx < bytes.len() {
-        match bytes[idx] {
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
             b'\r' => {
-                if bytes.get(idx + 1) == Some(&b'\n') {
+                if bytes.get(i + 1) == Some(&b'\n') {
                     return LineEnding::Crlf;
                 }
                 return LineEnding::Cr;
             }
             b'\n' => return LineEnding::Lf,
-            _ => idx += 1,
+            _ => {}
         }
     }
-
     LineEnding::Lf
 }
 
@@ -42,7 +39,7 @@ pub fn normalize_line_endings_to_lf(text: &str) -> String {
 }
 
 /// Replace unicode special characters with ASCII equivalents and strip
-/// trailing whitespace from each line. Preserves final newline if present.
+/// trailing whitespace from each line.
 pub fn replace_special_chars(text: &str) -> String {
     text.split('\n')
         .map(str::trim_end)
