@@ -1,5 +1,12 @@
 use std::borrow::Cow;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineEnding {
+    Lf,
+    Crlf,
+    Cr,
+}
+
 /// Strip UTF-8 BOM if present, returning the BOM and remaining text.
 pub fn strip_bom(content: &str) -> (&str, &str) {
     content
@@ -7,13 +14,35 @@ pub fn strip_bom(content: &str) -> (&str, &str) {
         .map_or(("", content), |rest| ("\u{FEFF}", rest))
 }
 
-/// Detect whether the file uses CRLF line endings.
-pub fn is_crlf(text: &str) -> bool {
-    text.contains("\r\n")
+/// Detect the first line ending style used in the file.
+/// Defaults to LF when no line ending is present.
+pub fn detect_line_ending(text: &str) -> LineEnding {
+    let bytes = text.as_bytes();
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'\r' => {
+                if bytes.get(idx + 1) == Some(&b'\n') {
+                    return LineEnding::Crlf;
+                }
+                return LineEnding::Cr;
+            }
+            b'\n' => return LineEnding::Lf,
+            _ => idx += 1,
+        }
+    }
+
+    LineEnding::Lf
 }
 
-/// Normalize line endings to LF and replace unicode special characters with
-/// ASCII equivalents. Strips trailing whitespace from each line.
+/// Normalize all supported line endings to LF.
+pub fn normalize_line_endings_to_lf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Replace unicode special characters with ASCII equivalents and strip
+/// trailing whitespace from each line. Preserves final newline if present.
 pub fn replace_special_chars(text: &str) -> String {
     text.split('\n')
         .map(str::trim_end)
@@ -69,12 +98,12 @@ pub fn replace_special_chars(text: &str) -> String {
         )
 }
 
-/// Restore line endings to CRLF if the original file used them.
+/// Restore line endings to the style originally used by the file.
 /// Returns a borrowed reference when no conversion is needed.
-pub fn restore_line_endings(text: &str, crlf: bool) -> Cow<'_, str> {
-    if crlf {
-        Cow::Owned(text.replace('\n', "\r\n"))
-    } else {
-        Cow::Borrowed(text)
+pub fn restore_line_endings(text: &str, line_ending: LineEnding) -> Cow<'_, str> {
+    match line_ending {
+        LineEnding::Lf => Cow::Borrowed(text),
+        LineEnding::Crlf => Cow::Owned(text.replace('\n', "\r\n")),
+        LineEnding::Cr => Cow::Owned(text.replace('\n', "\r")),
     }
 }

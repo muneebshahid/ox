@@ -45,10 +45,10 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         std::fs::read_to_string(args.path).map_err(|e| format!("Error reading file: {e}"))?;
 
     let (bom, content) = normalize::strip_bom(&raw_content);
-    let crlf = normalize::is_crlf(content);
-    let mut base = content.replace("\r\n", "\n");
-    let mut old_text = args.old_text.replace("\r\n", "\n");
-    let new_text = args.new_text.replace("\r\n", "\n");
+    let line_ending = normalize::detect_line_ending(content);
+    let mut base = normalize::normalize_line_endings_to_lf(content);
+    let mut old_text = normalize::normalize_line_endings_to_lf(args.old_text);
+    let new_text = normalize::normalize_line_endings_to_lf(args.new_text);
 
     let mut occurrences = base.matches(&*old_text).count();
     if occurrences == 0 {
@@ -74,7 +74,10 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         ));
     }
 
-    let final_content = format!("{bom}{}", normalize::restore_line_endings(&replaced, crlf));
+    let final_content = format!(
+        "{bom}{}",
+        normalize::restore_line_endings(&replaced, line_ending)
+    );
     std::fs::write(args.path, final_content).map_err(|e| format!("Error writing file: {e}"))?;
 
     Ok(format!("Successfully edited {}", args.path))
@@ -152,6 +155,20 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "line1\r\nchanged\r\nline3"
         );
+    }
+
+    #[test]
+    fn preserves_cr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\rline2\rline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "line1\rchanged\rline3");
     }
 
     #[test]
