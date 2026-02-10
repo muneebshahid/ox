@@ -289,4 +289,35 @@ mod tests {
         assert!(result.contains("Successfully edited"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
     }
+
+    #[test]
+    fn mixed_line_endings_lf_first_restores_lf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\nline2\r\nline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nchanged\nline3");
+    }
+
+    #[test]
+    fn mixed_line_endings_crlf_first_restores_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\r\nline2\nline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "line1\r\nchanged\r\nline3"
+        );
+    }
 }

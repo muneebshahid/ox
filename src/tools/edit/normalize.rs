@@ -107,3 +107,38 @@ pub fn restore_line_endings(text: &str, line_ending: LineEnding) -> Cow<'_, str>
         LineEnding::Cr => Cow::Owned(text.replace('\n', "\r")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_line_ending_uses_first_encountered_separator() {
+        assert_eq!(detect_line_ending("a\nb\r\nc"), LineEnding::Lf);
+        assert_eq!(detect_line_ending("a\r\nb\nc"), LineEnding::Crlf);
+        assert_eq!(detect_line_ending("a\rb\nc"), LineEnding::Cr);
+    }
+
+    #[test]
+    fn detect_line_ending_defaults_to_lf_without_newlines() {
+        assert_eq!(detect_line_ending("abc"), LineEnding::Lf);
+    }
+
+    #[test]
+    fn normalize_line_endings_to_lf_handles_mixed_endings() {
+        assert_eq!(normalize_line_endings_to_lf("a\r\nb\rc\n"), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn restore_line_endings_handles_all_styles() {
+        assert_eq!(restore_line_endings("a\nb", LineEnding::Lf), "a\nb");
+        assert_eq!(restore_line_endings("a\nb", LineEnding::Crlf), "a\r\nb");
+        assert_eq!(restore_line_endings("a\nb", LineEnding::Cr), "a\rb");
+    }
+
+    #[test]
+    fn replace_special_chars_preserves_final_newline() {
+        assert_eq!(replace_special_chars("a  \n"), "a\n");
+        assert_eq!(replace_special_chars("a  \n b  \n"), "a\n b\n");
+    }
+}
