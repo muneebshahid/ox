@@ -1,5 +1,5 @@
 use crate::app_context::AppContext;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use reqwest::Response;
 use serde_json::json;
 
@@ -34,20 +34,12 @@ pub async fn call_openai(
         });
     }
 
-    let request = client.post(auth.endpoint()).headers(headers).json(&payload);
-
-    let response = request
-        .send()
-        .await
-        .context("failed to send request to OpenAI")?;
-
-    match response.status() {
-        reqwest::StatusCode::OK => Ok(response),
-        status => {
-            let body = response.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!(
-                "OpenAI API returned error status: ({status}): {body}"
-            ))
-        }
-    }
+    crate::client::call_with_retry(|| {
+        client
+            .post(auth.endpoint())
+            .headers(headers.clone())
+            .json(&payload)
+            .send()
+    })
+    .await
 }

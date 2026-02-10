@@ -6,12 +6,18 @@ mod stream_tests;
 
 use crate::api;
 use crate::app_context::AppContext;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use event_handler::EventHandler;
 use futures::StreamExt;
 use stream::{get_event, parse_event};
 
 const MAX_TOOL_CALLS: usize = 20;
+const MAX_EMPTY_STREAM_RETRIES: u32 = 2;
+const EMPTY_STREAM_BASE_DELAY_MS: u64 = 500;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct StreamError(String);
 
 pub async fn run(
     app: &AppContext,
@@ -19,13 +25,35 @@ pub async fn run(
     session_id: &str,
 ) -> Result<()> {
     for _ in 0..MAX_TOOL_CALLS {
-        let response = api::call_openai(app, history, session_id).await?;
-        let has_tool_calls = stream_response(response, history).await?;
+        let has_tool_calls = call_and_stream_with_retry(app, history, session_id).await?;
         if !has_tool_calls {
             break;
         }
     }
     Ok(())
+}
+
+async fn call_and_stream_with_retry(
+    app: &AppContext,
+    history: &mut Vec<serde_json::Value>,
+    session_id: &str,
+) -> Result<bool> {
+    for attempt in 0..=MAX_EMPTY_STREAM_RETRIES {
+        let response = api::call_openai(app, history, session_id).await?;
+        match stream_response(response, history).await {
+            Ok(result) => return Ok(result),
+            Err(e)
+                if attempt < MAX_EMPTY_STREAM_RETRIES
+                    && e.downcast_ref::<StreamError>().is_some() =>
+            {
+                let delay = EMPTY_STREAM_BASE_DELAY_MS * 2u64.pow(attempt);
+                eprintln!("stream failed, retrying in {delay}ms: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
 }
 
 async fn stream_response(
@@ -52,10 +80,10 @@ async fn stream_response(
         }
 
         if let Some(message) = handler.failure_message() {
-            return Err(anyhow!("stream failed: {message}"));
+            return Err(StreamError(format!("stream failed: {message}")).into());
         }
         if !handler.saw_completed() {
-            return Err(anyhow!("stream closed before response.completed"));
+            return Err(StreamError("stream closed before response.completed".into()).into());
         }
 
         handler.has_tool_calls()
