@@ -14,9 +14,8 @@ pub fn is_crlf(text: &str) -> bool {
 
 /// Normalize line endings to LF and replace unicode special characters with
 /// ASCII equivalents. Strips trailing whitespace from each line.
-pub fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
-        .lines()
+pub fn replace_special_chars(text: &str) -> String {
+    text.split('\n')
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")

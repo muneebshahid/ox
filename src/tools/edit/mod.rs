@@ -46,11 +46,17 @@ fn execute(args: &EditArgs) -> Result<String, String> {
 
     let (bom, content) = normalize::strip_bom(&raw_content);
     let crlf = normalize::is_crlf(content);
-    let base = normalize::normalize(content);
-    let old_text = normalize::normalize(args.old_text);
+    let mut base = content.replace("\r\n", "\n");
+    let mut old_text = args.old_text.replace("\r\n", "\n");
     let new_text = args.new_text.replace("\r\n", "\n");
 
-    let occurrences = base.matches(&*old_text).count();
+    let mut occurrences = base.matches(&*old_text).count();
+    if occurrences == 0 {
+        base = normalize::replace_special_chars(&base);
+        old_text = normalize::replace_special_chars(&old_text);
+        occurrences = base.matches(&*old_text).count();
+    }
+
     if old_text.is_empty() || occurrences == 0 {
         return Err("Error: old_text not found in file".to_string());
     }
