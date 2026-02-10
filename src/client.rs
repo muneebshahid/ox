@@ -34,7 +34,9 @@ where
                     .unwrap_or_else(|| Duration::from_millis(BASE_DELAY_MS * 2u64.pow(attempt)))
                     .min(Duration::from_millis(MAX_RETRY_DELAY_MS));
                 last_error = Some(format!("status {}", response.status()));
-                tokio::time::sleep(delay).await;
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(delay).await;
+                }
             }
             Ok(response) if response.status() == reqwest::StatusCode::OK => return Ok(response),
             Ok(response) => {
@@ -45,7 +47,9 @@ where
             Err(e) if e.is_timeout() || e.is_connect() => {
                 let delay = Duration::from_millis(BASE_DELAY_MS * 2u64.pow(attempt));
                 last_error = Some(e.to_string());
-                tokio::time::sleep(delay).await;
+                if attempt < MAX_RETRIES {
+                    tokio::time::sleep(delay).await;
+                }
             }
             Err(e) => return Err(e.into()),
         }
