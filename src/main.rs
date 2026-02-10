@@ -56,14 +56,11 @@ async fn main() -> Result<()> {
                     eprintln!("Error: {e}");
                 }
             }
-            signal_result = signal::ctrl_c() => {
-                match signal_result {
-                    Ok(()) => {
-                        eprintln!("\nInterrupted. Returning to prompt.");
-                    }
-                    Err(e) => {
-                        eprintln!("\nError waiting for Ctrl+C signal: {e}");
-                    }
+            result = signal::ctrl_c() => {
+                if let Err(e) = result {
+                    eprintln!("\nError waiting for Ctrl+C signal: {e}");
+                } else {
+                    eprintln!("\nInterrupted. Returning to prompt.");
                 }
             }
         }

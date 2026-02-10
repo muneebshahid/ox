@@ -114,22 +114,18 @@ impl<'a> EventHandler<'a> {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     fn handle_response_failed(&mut self, response: Option<&ResponseFailedPayload>) {
         let error = response.and_then(|p| p.error.as_ref());
-        let message = error
-            .and_then(|e| e.message.as_deref())
-            .map(str::to_owned)
-            .or_else(|| {
-                error
-                    .and_then(|e| e.code.as_deref())
-                    .map(|c| format!("response.failed: {c}"))
-            })
-            .or_else(|| {
-                response
-                    .and_then(|p| p.status.as_deref())
-                    .map(|s| format!("response.failed with status={s}"))
-            })
-            .unwrap_or_else(|| "response.failed event received".to_string());
+        let message = if let Some(msg) = error.and_then(|e| e.message.as_deref()) {
+            msg.to_owned()
+        } else if let Some(code) = error.and_then(|e| e.code.as_deref()) {
+            format!("response.failed: {code}")
+        } else if let Some(status) = response.and_then(|p| p.status.as_deref()) {
+            format!("response.failed with status={status}")
+        } else {
+            "response.failed event received".to_string()
+        };
         self.set_failure(message);
     }
 
