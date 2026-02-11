@@ -13,6 +13,7 @@ pub async fn call_openai(
         auth,
         tool_defs,
         instructions,
+        ..
     } = app;
     let headers = auth.build_headers(client, session_id).await?;
 

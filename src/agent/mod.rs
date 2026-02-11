@@ -20,53 +20,79 @@ const EMPTY_STREAM_BASE_DELAY_MS: u64 = 500;
 #[error("{0}")]
 struct StreamError(String);
 
+struct AgentRunner<'a> {
+    app: &'a AppContext,
+    history: &'a mut Vec<serde_json::Value>,
+    session_id: &'a str,
+    bridge: &'a AgentEventBridge,
+}
+
+impl<'a> AgentRunner<'a> {
+    const fn new(
+        app: &'a AppContext,
+        history: &'a mut Vec<serde_json::Value>,
+        session_id: &'a str,
+        bridge: &'a AgentEventBridge,
+    ) -> Self {
+        Self {
+            app,
+            history,
+            session_id,
+            bridge,
+        }
+    }
+
+    async fn run_all_turns(&mut self) -> Result<()> {
+        for _ in 0..MAX_TOOL_CALLS {
+            self.bridge.emit_turn_start();
+            let turn_result = self.call_and_stream_with_retry().await;
+            if let Err(err) = &turn_result {
+                self.bridge.emit_error(err.to_string());
+            }
+            self.bridge.emit_turn_end();
+
+            let has_tool_calls = turn_result?;
+            if !has_tool_calls {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn call_and_stream_with_retry(&mut self) -> Result<bool> {
+        for attempt in 0..=MAX_EMPTY_STREAM_RETRIES {
+            let response = api::call_openai(self.app, self.history, self.session_id).await?;
+            match self.stream_response(response).await {
+                Ok(result) => return Ok(result),
+                Err(e)
+                    if attempt < MAX_EMPTY_STREAM_RETRIES
+                        && e.downcast_ref::<StreamError>().is_some() =>
+                {
+                    let delay = EMPTY_STREAM_BASE_DELAY_MS * 2u64.pow(attempt);
+                    eprintln!("stream failed, retrying in {delay}ms: {e}");
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+
+    async fn stream_response(&mut self, response: reqwest::Response) -> Result<bool> {
+        stream_response_impl(response, self.history, self.bridge).await
+    }
+}
+
 pub async fn run(
     app: &AppContext,
     history: &mut Vec<serde_json::Value>,
     session_id: &str,
-    bridge: &AgentEventBridge,
 ) -> Result<()> {
-    for _ in 0..MAX_TOOL_CALLS {
-        bridge.emit_turn_start();
-        let turn_result = call_and_stream_with_retry(app, history, session_id, bridge).await;
-        if let Err(err) = &turn_result {
-            bridge.emit_error(err.to_string());
-        }
-        bridge.emit_turn_end();
-
-        let has_tool_calls = turn_result?;
-        if !has_tool_calls {
-            break;
-        }
-    }
-    Ok(())
+    let mut runner = AgentRunner::new(app, history, session_id, &app.agent_bridge);
+    runner.run_all_turns().await
 }
 
-async fn call_and_stream_with_retry(
-    app: &AppContext,
-    history: &mut Vec<serde_json::Value>,
-    session_id: &str,
-    bridge: &AgentEventBridge,
-) -> Result<bool> {
-    for attempt in 0..=MAX_EMPTY_STREAM_RETRIES {
-        let response = api::call_openai(app, history, session_id).await?;
-        match stream_response(response, history, bridge).await {
-            Ok(result) => return Ok(result),
-            Err(e)
-                if attempt < MAX_EMPTY_STREAM_RETRIES
-                    && e.downcast_ref::<StreamError>().is_some() =>
-            {
-                let delay = EMPTY_STREAM_BASE_DELAY_MS * 2u64.pow(attempt);
-                eprintln!("stream failed, retrying in {delay}ms: {e}");
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    unreachable!()
-}
-
-async fn stream_response(
+async fn stream_response_impl(
     response: reqwest::Response,
     history: &mut Vec<serde_json::Value>,
     bridge: &AgentEventBridge,
@@ -111,7 +137,7 @@ async fn stream_response(
 #[cfg(test)]
 mod tests {
     use super::StreamError;
-    use super::stream_response;
+    use super::stream_response_impl;
     use crate::events::agent_bridge::AgentEventBridge;
     use crate::events::hub::EventHub;
     use crate::events::types::CoreEvent;
@@ -149,7 +175,7 @@ mod tests {
         let mut history = Vec::new();
         let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let err = stream_response(response, &mut history, &bridge)
+        let err = stream_response_impl(response, &mut history, &bridge)
             .await
             .expect_err("expected stream error");
         assert!(
@@ -166,7 +192,7 @@ mod tests {
         let mut history = Vec::new();
         let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let has_tool_calls = stream_response(response, &mut history, &bridge)
+        let has_tool_calls = stream_response_impl(response, &mut history, &bridge)
             .await
             .expect("should not error after committed output");
         assert!(!has_tool_calls);
@@ -190,7 +216,7 @@ mod tests {
         let mut history = Vec::new();
         let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let has_tool_calls = stream_response(response, &mut history, &bridge)
+        let has_tool_calls = stream_response_impl(response, &mut history, &bridge)
             .await
             .expect("should not error after committed output");
         assert!(!has_tool_calls);
@@ -216,7 +242,7 @@ mod tests {
         let mut sub = hub.subscribe();
         let bridge = AgentEventBridge::new(hub);
 
-        let has_tool_calls = stream_response(response, &mut history, &bridge)
+        let has_tool_calls = stream_response_impl(response, &mut history, &bridge)
             .await
             .expect("stream should succeed");
         assert!(!has_tool_calls);

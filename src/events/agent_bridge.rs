@@ -1,4 +1,4 @@
-use crate::events::hub::EventHub;
+use crate::events::hub::{EventHub, Subscription};
 use crate::events::types::CoreEvent;
 
 #[derive(Clone)]
@@ -26,5 +26,9 @@ impl AgentEventBridge {
 
     pub fn emit_turn_end(&self) {
         self.hub.publish(CoreEvent::AgentTurnEnd);
+    }
+
+    pub fn subscribe(&self) -> Subscription {
+        self.hub.subscribe()
     }
 }

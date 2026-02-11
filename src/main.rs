@@ -23,8 +23,9 @@ async fn main() -> Result<()> {
     }
     let mut session_state = session::open_session(&cli.session_name)?;
     let app = AppContext::new();
-    let agent_bridge =
-        events::agent_bridge::AgentEventBridge::new(events::hub::EventHub::new(1024));
+    if is_debug_events_enabled() {
+        spawn_event_debug_logger(&app);
+    }
     let stdin = io::stdin();
     let reasoning = app.auth.reasoning_setting();
     eprintln!(
@@ -55,7 +56,7 @@ async fn main() -> Result<()> {
         let persist_start = session_state.history_len();
 
         tokio::select! {
-            run_result = agent::run(&app, session_state.history_mut(), &session_id, &agent_bridge) => {
+            run_result = agent::run(&app, session_state.history_mut(), &session_id) => {
                 if let Err(e) = run_result {
                     eprintln!("Error: {e}");
                 }
@@ -77,4 +78,23 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn is_debug_events_enabled() -> bool {
+    std::env::var("OX_DEBUG_EVENTS").is_ok_and(|value| value != "0")
+}
+
+fn spawn_event_debug_logger(app: &AppContext) {
+    let mut subscription = app.agent_bridge.subscribe();
+    tokio::spawn(async move {
+        loop {
+            match subscription.recv().await {
+                Ok(event) => eprintln!("[core-event] {event:?}"),
+                Err(events::hub::RecvError::Lagged(dropped)) => {
+                    eprintln!("[core-event] lagged, dropped {dropped} events");
+                }
+                Err(events::hub::RecvError::Closed) => break,
+            }
+        }
+    });
 }
