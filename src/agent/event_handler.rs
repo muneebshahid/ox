@@ -2,12 +2,14 @@ use super::events::{
     FunctionCallItem, ResponseCompletedPayload, ResponseFailedPayload, StreamEvent,
     parse_function_call_item,
 };
+use crate::events::agent_bridge::AgentEventBridge;
 use crate::tools;
 use anyhow::Result;
 use std::io::{self, Write};
 
 pub(super) struct EventHandler<'a> {
     history: &'a mut Vec<serde_json::Value>,
+    bridge: Option<&'a AgentEventBridge>,
     has_tool_calls: bool,
     committed_any: bool,
     saw_completed: bool,
@@ -15,9 +17,13 @@ pub(super) struct EventHandler<'a> {
 }
 
 impl<'a> EventHandler<'a> {
-    pub(super) const fn new(history: &'a mut Vec<serde_json::Value>) -> Self {
+    pub(super) const fn new(
+        history: &'a mut Vec<serde_json::Value>,
+        bridge: Option<&'a AgentEventBridge>,
+    ) -> Self {
         Self {
             history,
+            bridge,
             has_tool_calls: false,
             committed_any: false,
             saw_completed: false,
@@ -28,7 +34,7 @@ impl<'a> EventHandler<'a> {
     pub(super) fn handle_event(&mut self, event: StreamEvent) -> Result<()> {
         match event {
             StreamEvent::OutputItemAdded { item } => Self::handle_output_item_added(&item),
-            StreamEvent::TextDelta { delta } => Self::handle_text_delta(&delta)?,
+            StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta)?,
             StreamEvent::OutputItemDone { item } => self.handle_output_item_done(&item),
             StreamEvent::ResponseCompleted { response }
             | StreamEvent::ResponseDone { response } => {
@@ -71,7 +77,10 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    fn handle_text_delta(delta: &str) -> Result<()> {
+    fn handle_text_delta(&self, delta: &str) -> Result<()> {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_text_delta(delta);
+        }
         print!("{delta}");
         io::stdout().flush()?;
         Ok(())
@@ -164,7 +173,7 @@ mod tests {
     #[test]
     fn stores_function_call_and_output_in_history() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(
@@ -210,7 +219,7 @@ mod tests {
     #[test]
     fn stores_reasoning_item_in_history() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(
@@ -251,7 +260,7 @@ mod tests {
     #[test]
     fn marks_completed_on_response_completed_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(
@@ -272,7 +281,7 @@ mod tests {
     #[test]
     fn marks_failure_on_response_failed_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(
@@ -295,7 +304,7 @@ mod tests {
     #[test]
     fn marks_failure_on_error_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(
@@ -319,7 +328,7 @@ mod tests {
     #[test]
     fn does_not_mark_committed_on_delta_only_events() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
         handler
             .handle_event(

@@ -6,6 +6,7 @@ mod stream_tests;
 
 use crate::api;
 use crate::app_context::AppContext;
+use crate::events::agent_bridge::AgentEventBridge;
 use anyhow::Result;
 use event_handler::EventHandler;
 use futures::StreamExt;
@@ -23,9 +24,17 @@ pub async fn run(
     app: &AppContext,
     history: &mut Vec<serde_json::Value>,
     session_id: &str,
+    bridge: &AgentEventBridge,
 ) -> Result<()> {
     for _ in 0..MAX_TOOL_CALLS {
-        let has_tool_calls = call_and_stream_with_retry(app, history, session_id).await?;
+        bridge.emit_turn_start();
+        let turn_result = call_and_stream_with_retry(app, history, session_id, bridge).await;
+        if let Err(err) = &turn_result {
+            bridge.emit_error(err.to_string());
+        }
+        bridge.emit_turn_end();
+
+        let has_tool_calls = turn_result?;
         if !has_tool_calls {
             break;
         }
@@ -37,10 +46,11 @@ async fn call_and_stream_with_retry(
     app: &AppContext,
     history: &mut Vec<serde_json::Value>,
     session_id: &str,
+    bridge: &AgentEventBridge,
 ) -> Result<bool> {
     for attempt in 0..=MAX_EMPTY_STREAM_RETRIES {
         let response = api::call_openai(app, history, session_id).await?;
-        match stream_response(response, history).await {
+        match stream_response(response, history, bridge).await {
             Ok(result) => return Ok(result),
             Err(e)
                 if attempt < MAX_EMPTY_STREAM_RETRIES
@@ -59,12 +69,13 @@ async fn call_and_stream_with_retry(
 async fn stream_response(
     response: reqwest::Response,
     history: &mut Vec<serde_json::Value>,
+    bridge: &AgentEventBridge,
 ) -> Result<bool> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
 
     let has_tool_calls = {
-        let mut handler = EventHandler::new(history);
+        let mut handler = EventHandler::new(history, Some(bridge));
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
@@ -101,6 +112,9 @@ async fn stream_response(
 mod tests {
     use super::StreamError;
     use super::stream_response;
+    use crate::events::agent_bridge::AgentEventBridge;
+    use crate::events::hub::EventHub;
+    use crate::events::types::CoreEvent;
     use anyhow::Result;
     use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
@@ -133,8 +147,9 @@ mod tests {
         let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n";
         let response = response_from_sse_body(body).await.expect("build response");
         let mut history = Vec::new();
+        let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let err = stream_response(response, &mut history)
+        let err = stream_response(response, &mut history, &bridge)
             .await
             .expect_err("expected stream error");
         assert!(
@@ -149,8 +164,9 @@ mod tests {
         let body = "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n\n";
         let response = response_from_sse_body(body).await.expect("build response");
         let mut history = Vec::new();
+        let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let has_tool_calls = stream_response(response, &mut history)
+        let has_tool_calls = stream_response(response, &mut history, &bridge)
             .await
             .expect("should not error after committed output");
         assert!(!has_tool_calls);
@@ -172,8 +188,9 @@ mod tests {
         );
         let response = response_from_sse_body(body).await.expect("build response");
         let mut history = Vec::new();
+        let bridge = AgentEventBridge::new(EventHub::new(16));
 
-        let has_tool_calls = stream_response(response, &mut history)
+        let has_tool_calls = stream_response(response, &mut history, &bridge)
             .await
             .expect("should not error after committed output");
         assert!(!has_tool_calls);
@@ -184,6 +201,29 @@ mod tests {
                 "role": "assistant",
                 "content": [{ "type": "output_text", "text": "Hello" }]
             })]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_emits_text_delta_event() {
+        let body = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let response = response_from_sse_body(body).await.expect("build response");
+        let mut history = Vec::new();
+        let hub = EventHub::new(16);
+        let mut sub = hub.subscribe();
+        let bridge = AgentEventBridge::new(hub);
+
+        let has_tool_calls = stream_response(response, &mut history, &bridge)
+            .await
+            .expect("stream should succeed");
+        assert!(!has_tool_calls);
+
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentTextDelta("Hi".to_string()))
         );
     }
 }

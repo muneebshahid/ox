@@ -23,6 +23,8 @@ async fn main() -> Result<()> {
     }
     let mut session_state = session::open_session(&cli.session_name)?;
     let app = AppContext::new();
+    let agent_bridge =
+        events::agent_bridge::AgentEventBridge::new(events::hub::EventHub::new(1024));
     let stdin = io::stdin();
     let reasoning = app.auth.reasoning_setting();
     eprintln!(
@@ -53,7 +55,7 @@ async fn main() -> Result<()> {
         let persist_start = session_state.history_len();
 
         tokio::select! {
-            run_result = agent::run(&app, session_state.history_mut(), &session_id) => {
+            run_result = agent::run(&app, session_state.history_mut(), &session_id, &agent_bridge) => {
                 if let Err(e) = run_result {
                     eprintln!("Error: {e}");
                 }
