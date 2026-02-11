@@ -4,6 +4,7 @@ mod app_context;
 mod auth;
 mod cli;
 mod client;
+mod events;
 mod prompt;
 mod session;
 mod tools;
