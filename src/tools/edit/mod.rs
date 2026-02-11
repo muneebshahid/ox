@@ -45,13 +45,23 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         std::fs::read_to_string(args.path).map_err(|e| format!("Error reading file: {e}"))?;
 
     let (bom, content) = normalize::strip_bom(&raw_content);
-    let crlf = normalize::is_crlf(content);
-    let base = normalize::normalize(content);
-    let old_text = normalize::normalize(args.old_text);
-    let new_text = args.new_text.replace("\r\n", "\n");
+    let line_ending = normalize::detect_line_ending(content);
+    let mut base = normalize::normalize_line_endings_to_lf(content);
+    let mut old_text = normalize::normalize_line_endings_to_lf(args.old_text);
+    let new_text = normalize::normalize_line_endings_to_lf(args.new_text);
 
-    let occurrences = base.matches(&*old_text).count();
-    if old_text.is_empty() || occurrences == 0 {
+    if old_text.is_empty() {
+        return Err("Error: old_text not found in file".to_string());
+    }
+
+    let mut occurrences = base.matches(&*old_text).count();
+    if occurrences == 0 {
+        base = normalize::replace_special_chars(&base);
+        old_text = normalize::replace_special_chars(&old_text);
+        occurrences = base.matches(&*old_text).count();
+    }
+
+    if occurrences == 0 {
         return Err("Error: old_text not found in file".to_string());
     }
     if occurrences > 1 {
@@ -68,7 +78,10 @@ fn execute(args: &EditArgs) -> Result<String, String> {
         ));
     }
 
-    let final_content = format!("{bom}{}", normalize::restore_line_endings(&replaced, crlf));
+    let final_content = format!(
+        "{bom}{}",
+        normalize::restore_line_endings(&replaced, line_ending)
+    );
     std::fs::write(args.path, final_content).map_err(|e| format!("Error writing file: {e}"))?;
 
     Ok(format!("Successfully edited {}", args.path))
@@ -146,6 +159,20 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             "line1\r\nchanged\r\nline3"
         );
+    }
+
+    #[test]
+    fn preserves_cr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\rline2\rline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "line1\rchanged\rline3");
     }
 
     #[test]
@@ -265,5 +292,36 @@ mod tests {
         }));
         assert!(result.contains("Successfully edited"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
+    }
+
+    #[test]
+    fn mixed_line_endings_lf_first_restores_lf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\nline2\r\nline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "line1\nchanged\nline3");
+    }
+
+    #[test]
+    fn mixed_line_endings_crlf_first_restores_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "line1\r\nline2\nline3").unwrap();
+        let result = run(&json!({
+            "path": path.to_str().unwrap(),
+            "old_text": "line2",
+            "new_text": "changed"
+        }));
+        assert!(result.contains("Successfully edited"));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "line1\r\nchanged\r\nline3"
+        );
     }
 }

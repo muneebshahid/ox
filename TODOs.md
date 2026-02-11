@@ -11,3 +11,6 @@
 - Plugin system
 - Workflows
 - Grouding with cwd in tools (relative path)
+- Add logs for events we are ignoring!!
+- Add logs for messages recieved
+

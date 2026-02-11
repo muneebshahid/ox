@@ -10,7 +10,10 @@ pub struct AppContext {
 impl AppContext {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("failed to build HTTP client"),
             auth: auth::AuthConfig::from_env(),
             tool_defs: tools::definitions(),
             instructions: prompt::build(),
