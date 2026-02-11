@@ -9,6 +9,7 @@ use std::io::{self, Write};
 pub(super) struct EventHandler<'a> {
     history: &'a mut Vec<serde_json::Value>,
     has_tool_calls: bool,
+    committed_any: bool,
     saw_completed: bool,
     failure_message: Option<String>,
 }
@@ -18,6 +19,7 @@ impl<'a> EventHandler<'a> {
         Self {
             history,
             has_tool_calls: false,
+            committed_any: false,
             saw_completed: false,
             failure_message: None,
         }
@@ -44,6 +46,10 @@ impl<'a> EventHandler<'a> {
 
     pub(super) const fn has_tool_calls(&self) -> bool {
         self.has_tool_calls
+    }
+
+    pub(super) const fn committed_any(&self) -> bool {
+        self.committed_any
     }
 
     pub(super) const fn saw_completed(&self) -> bool {
@@ -73,7 +79,10 @@ impl<'a> EventHandler<'a> {
 
     fn handle_output_item_done(&mut self, item: &serde_json::Value) {
         match item.get("type").and_then(serde_json::Value::as_str) {
-            Some("message" | "reasoning") => self.history.push(item.clone()),
+            Some("message" | "reasoning") => {
+                self.history.push(item.clone());
+                self.committed_any = true;
+            }
             Some("function_call") => self.handle_output_function_call(item),
             _ => {}
         }
@@ -103,6 +112,7 @@ impl<'a> EventHandler<'a> {
             "output": result
         }));
         self.has_tool_calls = true;
+        self.committed_any = true;
     }
 
     fn handle_response_completed(&mut self, response: Option<&ResponseCompletedPayload>) {
@@ -175,6 +185,7 @@ mod tests {
             .expect("handle function call event");
 
         assert!(handler.has_tool_calls());
+        assert!(handler.committed_any());
         assert_eq!(history.len(), 2);
         assert_eq!(
             history[0],
@@ -221,6 +232,7 @@ mod tests {
             )
             .expect("handle reasoning event");
 
+        assert!(handler.committed_any());
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0],
@@ -302,5 +314,26 @@ mod tests {
             handler.failure_message(),
             Some("server_error: internal error")
         );
+    }
+
+    #[test]
+    fn does_not_mark_committed_on_delta_only_events() {
+        let mut history = Vec::new();
+        let mut handler = EventHandler::new(&mut history);
+
+        handler
+            .handle_event(
+                serde_json::from_str::<StreamEvent>(
+                    r#"{
+                        "type": "response.output_text.delta",
+                        "delta": "hello"
+                    }"#,
+                )
+                .expect("parse response.output_text.delta event"),
+            )
+            .expect("handle response.output_text.delta event");
+
+        assert!(!handler.committed_any());
+        assert!(history.is_empty());
     }
 }
