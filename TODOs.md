@@ -6,7 +6,8 @@
 - Paralled tool execution
 - Diff support
 - Reasoning effort support
-- Compaction
+- Compaction!!
+- Diff support
 - Hooks
 - Plugin system
 - Workflows

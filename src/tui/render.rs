@@ -6,42 +6,40 @@ use ratatui::{
 };
 
 pub fn draw(frame: &mut Frame<'_>, state: &TuiState) {
-    let [output_area, status_area, input_area] = split_layout(frame.area());
-    draw_output(frame, state, output_area);
-    draw_status(frame, state, status_area);
-    draw_input(frame, state, input_area);
-    place_input_cursor(frame, state, input_area);
-}
-
-fn split_layout(area: Rect) -> [Rect; 3] {
-    Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(3),
-        Constraint::Length(3),
-    ])
-    .areas(area)
+    if status_visible(state) {
+        let [output_area, status_area, input_area] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .areas(frame.area());
+        draw_output(frame, state, output_area);
+        draw_status(frame, state, status_area);
+        draw_input(frame, state, input_area);
+        place_input_cursor(frame, state, input_area);
+    } else {
+        let [output_area, input_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).areas(frame.area());
+        draw_output(frame, state, output_area);
+        draw_input(frame, state, input_area);
+        place_input_cursor(frame, state, input_area);
+    }
 }
 
 fn draw_output(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
-    let output = Paragraph::new(state.transcript())
-        .block(Block::default().title("Output").borders(Borders::ALL))
-        .wrap(Wrap { trim: false });
+    let output = Paragraph::new(state.transcript()).wrap(Wrap { trim: false });
     frame.render_widget(output, area);
 }
 
 fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
-    let status = Paragraph::new(state.status())
-        .block(Block::default().title("Status").borders(Borders::ALL));
+    let status = Paragraph::new(state.status());
     frame.render_widget(status, area);
 }
 
 fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
-    let input = Paragraph::new(state.input())
-        .block(
-            Block::default()
-                .title("Input (Enter submit, Esc quit)")
-                .borders(Borders::ALL),
-        )
+    let prompt = format!("> {}", state.input());
+    let input = Paragraph::new(prompt)
+        .block(Block::default().borders(Borders::TOP | Borders::BOTTOM))
         .wrap(Wrap { trim: false });
     frame.render_widget(input, area);
 }
@@ -49,12 +47,22 @@ fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
 fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
     let input_inner = input_area.inner(Margin {
         vertical: 1,
-        horizontal: 1,
+        horizontal: 0,
     });
     if input_inner.width > 0 && input_inner.height > 0 {
-        let (col, row) = cursor_offset(state.input(), input_inner.width, input_inner.height);
+        let (col, row) =
+            cursor_offset_with_prompt(state.input(), input_inner.width, input_inner.height);
         frame.set_cursor_position((input_inner.x + col, input_inner.y + row));
     }
+}
+
+fn status_visible(state: &TuiState) -> bool {
+    state.status() != "Idle"
+}
+
+fn cursor_offset_with_prompt(input: &str, width: u16, height: u16) -> (u16, u16) {
+    let display = format!("> {input}");
+    cursor_offset(&display, width, height)
 }
 
 fn cursor_offset(input: &str, width: u16, height: u16) -> (u16, u16) {

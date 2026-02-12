@@ -4,32 +4,9 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 ## Handled Events
 
-1. `response.output_item.added`
+1. `response.output_text.delta`
 
-- Behavior: if `item.type == "function_call"`, prints `Calling <name>...` (UX only).
-- Representative full event:
-
-```json
-{
-  "type": "response.output_item.added",
-  "response_id": "resp_123",
-  "output_index": 0,
-  "item": {
-    "type": "function_call",
-    "id": "fc_123",
-    "status": "in_progress",
-    "call_id": "call_123",
-    "name": "read_file",
-    "arguments": "{\"path\":\"README.md\"}"
-  }
-}
-```
-
-- Fields used by `ox`: `item.type`, `item.name`.
-
-2. `response.output_text.delta`
-
-- Behavior: streams text delta to stdout.
+- Behavior: emits `CoreEvent::AgentTextDelta`.
 - Representative full event:
 
 ```json
@@ -45,12 +22,17 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: `delta`.
 
-3. `response.output_item.done`
+2. `response.output_item.done`
 
 - Behavior:
   - `item.type == "message"`: appends raw `item` to history.
   - `item.type == "reasoning"`: appends raw `item` to history.
-  - `item.type == "function_call"`: appends raw `item`, executes tool, appends `function_call_output`.
+  - `item.type == "function_call"`:
+    - emits `CoreEvent::AgentToolCallStart`.
+    - appends raw `item`.
+    - executes tool.
+    - appends `function_call_output`.
+    - emits `CoreEvent::AgentToolCallEnd`.
 - Representative full events:
 
 ```json
@@ -103,7 +85,7 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: full `item` for history, plus function-call `call_id`, `name`, `arguments`.
 
-4. `response.completed`
+3. `response.completed`
 
 - Behavior: marks stream as completed.
 - Representative full event:
@@ -132,7 +114,7 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: `response.status` (completion/failure safety).
 
-5. `response.done`
+4. `response.done`
 
 - Behavior: treated as completion alias (same as `response.completed`).
 - Representative full event:
@@ -149,7 +131,7 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: `response.status` (same handling as `response.completed`).
 
-6. `response.failed`
+5. `response.failed`
 
 - Behavior: records failure message from payload.
 - Representative full event:
@@ -171,7 +153,7 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: `response.error.message`, `response.error.code`, `response.status`.
 
-7. `error`
+6. `error`
 
 - Behavior: records failure message from `code`/`message`.
 - Representative full event:

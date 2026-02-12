@@ -94,7 +94,16 @@ impl<'a> EventHandler<'a> {
             other => other.to_string(),
         };
 
+        if let Some(bridge) = self.bridge {
+            bridge.emit_tool_call_start(&call_id, &name, &args);
+        }
+
         let result = tools::execute(&name, &args);
+
+        if let Some(bridge) = self.bridge {
+            bridge.emit_tool_call_end(&call_id, &name);
+        }
+
         self.history.push(item.clone());
         self.history.push(serde_json::json!({
             "type": "function_call_output",
@@ -150,6 +159,9 @@ impl<'a> EventHandler<'a> {
 mod tests {
     use super::EventHandler;
     use crate::agent::events::StreamEvent;
+    use crate::events::agent_bridge::AgentEventBridge;
+    use crate::events::hub::EventHub;
+    use crate::events::types::CoreEvent;
 
     #[test]
     fn stores_function_call_and_output_in_history() {
@@ -313,5 +325,46 @@ mod tests {
 
         assert!(!handler.committed_any());
         assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn emits_tool_start_and_end_events() {
+        let mut history = Vec::new();
+        let hub = EventHub::new(8);
+        let mut sub = hub.subscribe();
+        let bridge = AgentEventBridge::new(hub);
+        let mut handler = EventHandler::new(&mut history, Some(&bridge));
+
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "function_call",
+                            "id": "fc_test",
+                            "call_id": "call_test",
+                            "name": "ls",
+                            "arguments": "{\"path\":\".\"}"
+                        }
+                    }"#,
+            )
+            .expect("parse function call event"),
+        );
+
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentToolCallStart {
+                call_id: "call_test".to_string(),
+                tool_name: "ls".to_string(),
+                args: "{\"path\":\".\"}".to_string(),
+            })
+        );
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentToolCallEnd {
+                call_id: "call_test".to_string(),
+                tool_name: "ls".to_string(),
+            })
+        );
     }
 }
