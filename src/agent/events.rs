@@ -3,9 +3,6 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
 pub(super) enum StreamEvent {
-    #[serde(rename = "response.output_item.added")]
-    OutputItemAdded { item: serde_json::Value },
-
     #[serde(rename = "response.output_text.delta")]
     TextDelta { delta: String },
 

@@ -7,12 +7,13 @@ mod stream_tests;
 use crate::api;
 use crate::app_context::AppContext;
 use crate::events::agent_bridge::AgentEventBridge;
-use anyhow::Result;
+use crate::session::SessionManager;
+use anyhow::{Result, anyhow};
 use event_handler::EventHandler;
 use futures::StreamExt;
 use stream::{get_event, parse_event};
 
-const MAX_TOOL_CALLS: usize = 20;
+const MAX_TOOL_CALLS: usize = 500;
 const MAX_EMPTY_STREAM_RETRIES: u32 = 2;
 const EMPTY_STREAM_BASE_DELAY_MS: u64 = 500;
 
@@ -20,19 +21,42 @@ const EMPTY_STREAM_BASE_DELAY_MS: u64 = 500;
 #[error("{0}")]
 struct StreamError(String);
 
-pub async fn run(
+pub async fn run(app: &AppContext, session_state: &mut SessionManager, input: &str) -> Result<()> {
+    session_state.append(serde_json::json!({
+        "role": "user",
+        "content": input
+    }))?;
+
+    let persist_start = session_state.history_len();
+    let session_id = session_state.session_name().to_string();
+    let bridge = &app.agent_bridge;
+
+    bridge.emit_turn_start();
+    let run_result = run_turn(app, session_state.history_mut(), &session_id).await;
+    bridge.emit_turn_end();
+
+    let persist_result = session_state.persist_from(persist_start);
+
+    match (run_result, persist_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
+        (Err(run_err), Err(persist_err)) => Err(anyhow!(
+            "agent run failed: {run_err}; session persist failed: {persist_err}"
+        )),
+    }
+}
+
+async fn run_turn(
     app: &AppContext,
     history: &mut Vec<serde_json::Value>,
     session_id: &str,
 ) -> Result<()> {
     let bridge = &app.agent_bridge;
     for _ in 0..MAX_TOOL_CALLS {
-        bridge.emit_turn_start();
         let turn_result = call_and_stream_with_retry(app, history, session_id, bridge).await;
         if let Err(err) = &turn_result {
             bridge.emit_error(err.to_string());
         }
-        bridge.emit_turn_end();
 
         let has_tool_calls = turn_result?;
         if !has_tool_calls {
@@ -73,45 +97,38 @@ async fn stream_response_impl(
 ) -> Result<bool> {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut handler = EventHandler::new(history, Some(bridge));
 
-    let has_tool_calls = {
-        let mut handler = EventHandler::new(history, Some(bridge));
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(data) = get_event(&mut buffer) {
-                let Some(event) = parse_event(&data) else {
-                    continue;
-                };
-                handler.handle_event(event)?;
+        while let Some(data) = get_event(&mut buffer) {
+            if let Some(event) = parse_event(&data) {
+                handler.handle_event(event);
             }
         }
+    }
 
-        if let Some(message) = handler.failure_message() {
-            if !handler.committed_any() {
-                return Err(StreamError(format!("stream failed: {message}")).into());
-            }
-            eprintln!("stream failed after committed output, continuing: {message}");
+    if let Some(message) = handler.failure_message() {
+        if !handler.committed_any() {
+            return Err(StreamError(format!("stream failed: {message}")).into());
         }
-        if !handler.saw_completed() {
-            if !handler.committed_any() {
-                return Err(StreamError("stream closed before response.completed".into()).into());
-            }
-            eprintln!("stream closed before response.completed after committed output, continuing");
+        eprintln!("stream failed after committed output, continuing: {message}");
+    }
+    if !handler.saw_completed() {
+        if !handler.committed_any() {
+            return Err(StreamError("stream closed before response.completed".into()).into());
         }
+        eprintln!("stream closed before response.completed after committed output, continuing");
+    }
 
-        handler.has_tool_calls()
-    };
-
-    Ok(has_tool_calls)
+    Ok(handler.has_tool_calls())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::StreamError;
-    use super::stream_response_impl;
+    use super::{StreamError, stream_response_impl};
     use crate::events::agent_bridge::AgentEventBridge;
     use crate::events::hub::EventHub;
     use crate::events::types::CoreEvent;

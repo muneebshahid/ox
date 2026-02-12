@@ -4,8 +4,6 @@ use super::events::{
 };
 use crate::events::agent_bridge::AgentEventBridge;
 use crate::tools;
-use anyhow::Result;
-use std::io::{self, Write};
 
 pub(super) struct EventHandler<'a> {
     history: &'a mut Vec<serde_json::Value>,
@@ -31,10 +29,10 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    pub(super) fn handle_event(&mut self, event: StreamEvent) -> Result<()> {
+    pub(super) fn handle_event(&mut self, event: StreamEvent) {
         match event {
-            StreamEvent::OutputItemAdded { item } => Self::handle_output_item_added(&item),
-            StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta)?,
+            StreamEvent::Ignored => {}
+            StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta),
             StreamEvent::OutputItemDone { item } => self.handle_output_item_done(&item),
             StreamEvent::ResponseCompleted { response }
             | StreamEvent::ResponseDone { response } => {
@@ -44,10 +42,7 @@ impl<'a> EventHandler<'a> {
                 self.handle_response_failed(response.as_ref());
             }
             StreamEvent::Error { code, message } => self.handle_error(code, message),
-            StreamEvent::Ignored => {}
         }
-
-        Ok(())
     }
 
     pub(super) const fn has_tool_calls(&self) -> bool {
@@ -66,24 +61,10 @@ impl<'a> EventHandler<'a> {
         self.failure_message.as_deref()
     }
 
-    fn handle_output_item_added(item: &serde_json::Value) {
-        if let Some(call) = parse_function_call_item(item) {
-            let name = if call.name.is_empty() {
-                "unknown"
-            } else {
-                &call.name
-            };
-            println!("Calling {name}...");
-        }
-    }
-
-    fn handle_text_delta(&self, delta: &str) -> Result<()> {
+    fn handle_text_delta(&self, delta: &str) {
         if let Some(bridge) = self.bridge {
             bridge.emit_text_delta(delta);
         }
-        print!("{delta}");
-        io::stdout().flush()?;
-        Ok(())
     }
 
     fn handle_output_item_done(&mut self, item: &serde_json::Value) {
@@ -175,10 +156,9 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_item.done",
                         "item": {
                             "type": "function_call",
@@ -188,10 +168,9 @@ mod tests {
                             "arguments": "{}"
                         }
                     }"#,
-                )
-                .expect("parse function call event"),
             )
-            .expect("handle function call event");
+            .expect("parse function call event"),
+        );
 
         assert!(handler.has_tool_calls());
         assert!(handler.committed_any());
@@ -221,10 +200,9 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_item.done",
                         "item": {
                             "type": "reasoning",
@@ -236,10 +214,9 @@ mod tests {
                             "extra_field": "keep-me"
                         }
                     }"#,
-                )
-                .expect("parse reasoning event"),
             )
-            .expect("handle reasoning event");
+            .expect("parse reasoning event"),
+        );
 
         assert!(handler.committed_any());
         assert_eq!(history.len(), 1);
@@ -262,17 +239,15 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.completed",
                         "response": { "status": "completed" }
                     }"#,
-                )
-                .expect("parse response.completed event"),
             )
-            .expect("handle response.completed event");
+            .expect("parse response.completed event"),
+        );
 
         assert!(handler.saw_completed());
         assert!(handler.failure_message().is_none());
@@ -283,20 +258,18 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.failed",
                         "response": {
                             "status": "failed",
                             "error": { "code": "rate_limit_exceeded", "message": "try again later" }
                         }
                     }"#,
-                )
-                .expect("parse response.failed event"),
             )
-            .expect("handle response.failed event");
+            .expect("parse response.failed event"),
+        );
 
         assert_eq!(handler.failure_message(), Some("try again later"));
     }
@@ -306,18 +279,16 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "error",
                         "code": "server_error",
                         "message": "internal error"
                     }"#,
-                )
-                .expect("parse error event"),
             )
-            .expect("handle error event");
+            .expect("parse error event"),
+        );
 
         assert_eq!(
             handler.failure_message(),
@@ -330,17 +301,15 @@ mod tests {
         let mut history = Vec::new();
         let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_text.delta",
                         "delta": "hello"
                     }"#,
-                )
-                .expect("parse response.output_text.delta event"),
             )
-            .expect("handle response.output_text.delta event");
+            .expect("parse response.output_text.delta event"),
+        );
 
         assert!(!handler.committed_any());
         assert!(history.is_empty());
