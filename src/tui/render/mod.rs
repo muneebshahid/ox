@@ -9,13 +9,16 @@ use output::{build_output_view, draw_output};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
 
 const INPUT_HEIGHT: u16 = 3;
 const RUNNING_BADGE_TOGGLE_INTERVAL: Duration = Duration::from_millis(250);
+const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
+const OX_BADGE_O_COLOR: Color = Color::Red;
+const OX_BADGE_X_COLOR: Color = Color::Cyan;
 
 pub struct RenderMeta {
     model: String,
@@ -93,17 +96,59 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
     let interval_ms = RUNNING_BADGE_TOGGLE_INTERVAL.as_millis().max(1);
     let highlight_o = (elapsed.as_millis() / interval_ms).is_multiple_of(2);
     let elapsed_seconds = elapsed.as_secs();
-    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let bracket_style = Style::default()
+        .fg(OX_BADGE_BRACKET_COLOR)
+        .add_modifier(Modifier::BOLD);
     let (o_style, x_style) = if highlight_o {
-        (bold, Style::default())
+        (
+            Style::default()
+                .fg(OX_BADGE_O_COLOR)
+                .add_modifier(Modifier::BOLD),
+            Style::default().fg(OX_BADGE_X_COLOR),
+        )
     } else {
-        (Style::default(), bold)
+        (
+            Style::default().fg(OX_BADGE_O_COLOR),
+            Style::default()
+                .fg(OX_BADGE_X_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
     };
 
     Line::from(vec![
-        Span::raw("["),
+        Span::styled("[", bracket_style),
         Span::styled("O", o_style),
         Span::styled("X", x_style),
-        Span::raw(format!("] {phase} ({elapsed_seconds}s)")),
+        Span::styled("]", bracket_style),
+        Span::raw(format!(" {phase} ({elapsed_seconds}s)")),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line};
+    use ratatui::style::Color;
+    use std::time::Duration;
+
+    #[test]
+    fn running_status_line_keeps_expected_text() {
+        let line = running_status_line(Duration::from_secs(3), "Thinking");
+        let rendered: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert_eq!(rendered, "[OX] Thinking (3s)");
+    }
+
+    #[test]
+    fn running_status_line_colors_ox_badge() {
+        let line = running_status_line(Duration::ZERO, "Thinking");
+
+        assert_eq!(line.spans[1].style.fg, Some(OX_BADGE_O_COLOR));
+        assert_eq!(line.spans[2].style.fg, Some(OX_BADGE_X_COLOR));
+        assert_eq!(line.spans[1].style.fg, Some(Color::Red));
+        assert_eq!(line.spans[2].style.fg, Some(Color::Cyan));
+    }
 }
