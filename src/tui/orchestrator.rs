@@ -69,17 +69,11 @@ fn current_git_branch() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
+        .ok()
+        .filter(|o| o.status.success())?;
 
     let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        return None;
-    }
-    Some(branch)
+    Some(branch).filter(|b| !b.is_empty() && b != "HEAD")
 }
 
 fn create_ticker() -> time::Interval {

@@ -1,6 +1,8 @@
-use crate::events::types::CoreEvent;
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
+
+use crate::events::types::CoreEvent;
 
 const STATUS_IDLE: &str = "Idle";
 const STATUS_RUNNING: &str = "Running";
@@ -68,16 +70,13 @@ impl TuiState {
         self.status == STATUS_RUNNING
     }
 
-    pub fn running_phase_label(&self) -> String {
+    pub fn running_phase_label(&self) -> Cow<'_, str> {
         match &self.run_phase {
-            RunPhase::Thinking => "Thinking".to_string(),
-            RunPhase::Responding => "Responding".to_string(),
+            RunPhase::Thinking => Cow::Borrowed("Thinking"),
+            RunPhase::Responding => Cow::Borrowed("Responding"),
+            RunPhase::Tool { name } if name.is_empty() => Cow::Borrowed("Running tool"),
             RunPhase::Tool { name } => {
-                if name.is_empty() {
-                    "Running tool".to_string()
-                } else {
-                    format!("Running {}", truncate_preview(name, 24))
-                }
+                Cow::Owned(format!("Running {}", truncate_preview(name, 24)))
             }
         }
     }
@@ -94,14 +93,13 @@ impl TuiState {
 
     pub fn handle_agent_event(&mut self, event: CoreEvent) {
         match event {
+            CoreEvent::ShutdownRequested | CoreEvent::Tick => return,
             CoreEvent::AgentTurnStart => {
                 self.set_running_status();
-                self.mark_dirty();
             }
             CoreEvent::AgentReasoningDelta(delta) => {
                 self.run_phase = RunPhase::Thinking;
                 self.append_reasoning_delta(&delta);
-                self.mark_dirty();
             }
             CoreEvent::AgentTextDelta(delta) => {
                 self.close_reasoning_trace();
@@ -110,15 +108,13 @@ impl TuiState {
                 }
                 self.run_phase = RunPhase::Responding;
                 self.transcript.push_str(&delta);
-                self.mark_dirty();
             }
             CoreEvent::AgentTurnEnd => {
                 self.close_reasoning_trace();
-                self.set_idle_status();
+                self.stop_running(STATUS_IDLE.to_string());
                 if !self.transcript.ends_with('\n') {
                     self.transcript.push('\n');
                 }
-                self.mark_dirty();
             }
             CoreEvent::AgentToolCallStart {
                 tool_name, args, ..
@@ -129,19 +125,16 @@ impl TuiState {
                 };
                 let message = format_tool_start_message(&tool_name, &args);
                 self.push_transcript_line(&message);
-                self.mark_dirty();
             }
             CoreEvent::AgentToolCallEnd { .. } => {
                 self.run_phase = RunPhase::Thinking;
-                self.mark_dirty();
             }
-            CoreEvent::ShutdownRequested | CoreEvent::Tick => {}
             CoreEvent::Error(message) => {
                 self.close_reasoning_trace();
-                self.set_status_message(message);
-                self.mark_dirty();
+                self.stop_running(message);
             }
         }
+        self.mark_dirty();
     }
 
     pub fn handle_user_input(&mut self, input: UserInput) -> StateCommand {
@@ -193,14 +186,8 @@ impl TuiState {
         self.run_phase = RunPhase::Thinking;
     }
 
-    fn set_idle_status(&mut self) {
-        self.status = STATUS_IDLE.to_string();
-        self.running_started_at = None;
-        self.run_phase = RunPhase::Thinking;
-    }
-
-    fn set_status_message(&mut self, message: String) {
-        self.status = message;
+    fn stop_running(&mut self, status: String) {
+        self.status = status;
         self.running_started_at = None;
         self.run_phase = RunPhase::Thinking;
     }
@@ -259,78 +246,10 @@ impl TuiState {
 fn format_tool_start_message(tool_name: &str, args_json: &str) -> String {
     let args = serde_json::from_str::<serde_json::Value>(args_json).ok();
 
-    match tool_name {
-        "read_file" => {
-            if let Some(args) = args.as_ref()
-                && let Some(path) = arg_str(args, "path")
-            {
-                let mut message = format!("[tool] reading {}", truncate_preview(path, 100));
-                if let Some(offset) = arg_u64(args, "offset") {
-                    if let Some(limit) = arg_u64(args, "limit") {
-                        if limit > 0 {
-                            let end = offset.saturating_add(limit).saturating_sub(1);
-                            let _ = write!(message, ":{offset}-{end}");
-                        }
-                    } else {
-                        let _ = write!(message, ":{offset}-");
-                    }
-                } else if let Some(limit) = arg_u64(args, "limit") {
-                    let _ = write!(message, " (limit {limit})");
-                }
-                return message;
-            }
-        }
-        "ls" => {
-            if let Some(args) = args.as_ref() {
-                let path = arg_str(args, "path").unwrap_or(".");
-                return format!("[tool] listing {}", truncate_preview(path, 100));
-            }
-        }
-        "bash" => {
-            if let Some(args) = args.as_ref()
-                && let Some(command) = arg_str(args, "command")
-            {
-                let command = command.replace('\n', " ");
-                return format!("[tool] bash: {}", truncate_preview(&command, 120));
-            }
-        }
-        "write_file" => {
-            if let Some(args) = args.as_ref()
-                && let Some(path) = arg_str(args, "path")
-            {
-                return format!("[tool] writing {}", truncate_preview(path, 100));
-            }
-        }
-        "edit" => {
-            if let Some(args) = args.as_ref()
-                && let Some(path) = arg_str(args, "path")
-            {
-                return format!("[tool] editing {}", truncate_preview(path, 100));
-            }
-        }
-        "grep" => {
-            if let Some(args) = args.as_ref() {
-                let pattern = arg_str(args, "pattern").unwrap_or("");
-                let path = arg_str(args, "path").unwrap_or(".");
-                return format!(
-                    "[tool] grep /{}/ in {}",
-                    truncate_preview(pattern, 60),
-                    truncate_preview(path, 80)
-                );
-            }
-        }
-        "find" => {
-            if let Some(args) = args.as_ref() {
-                let pattern = arg_str(args, "pattern").unwrap_or("");
-                let path = arg_str(args, "path").unwrap_or(".");
-                return format!(
-                    "[tool] finding {} in {}",
-                    truncate_preview(pattern, 60),
-                    truncate_preview(path, 80)
-                );
-            }
-        }
-        _ => {}
+    if let Some(args) = args.as_ref()
+        && let Some(message) = format_known_tool(tool_name, args)
+    {
+        return message;
     }
 
     let summary = args.as_ref().map_or_else(
@@ -341,6 +260,64 @@ fn format_tool_start_message(tool_name: &str, args_json: &str) -> String {
         format!("[tool] running {tool_name}")
     } else {
         format!("[tool] running {tool_name} {summary}")
+    }
+}
+
+fn format_known_tool(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+    match tool_name {
+        "read_file" => {
+            let path = arg_str(args, "path")?;
+            let mut message = format!("[tool] reading {}", truncate_preview(path, 100));
+            match (arg_u64(args, "offset"), arg_u64(args, "limit")) {
+                (Some(offset), Some(limit)) if limit > 0 => {
+                    let end = offset.saturating_add(limit).saturating_sub(1);
+                    let _ = write!(message, ":{offset}-{end}");
+                }
+                (Some(offset), None) => {
+                    let _ = write!(message, ":{offset}-");
+                }
+                (None, Some(limit)) => {
+                    let _ = write!(message, " (limit {limit})");
+                }
+                _ => {}
+            }
+            Some(message)
+        }
+        "ls" => {
+            let path = arg_str(args, "path").unwrap_or(".");
+            Some(format!("[tool] listing {}", truncate_preview(path, 100)))
+        }
+        "bash" => {
+            let command = arg_str(args, "command")?.replace('\n', " ");
+            Some(format!("[tool] bash: {}", truncate_preview(&command, 120)))
+        }
+        "write_file" => {
+            let path = arg_str(args, "path")?;
+            Some(format!("[tool] writing {}", truncate_preview(path, 100)))
+        }
+        "edit" => {
+            let path = arg_str(args, "path")?;
+            Some(format!("[tool] editing {}", truncate_preview(path, 100)))
+        }
+        "grep" => {
+            let pattern = arg_str(args, "pattern").unwrap_or("");
+            let path = arg_str(args, "path").unwrap_or(".");
+            Some(format!(
+                "[tool] grep /{}/ in {}",
+                truncate_preview(pattern, 60),
+                truncate_preview(path, 80)
+            ))
+        }
+        "find" => {
+            let pattern = arg_str(args, "pattern").unwrap_or("");
+            let path = arg_str(args, "path").unwrap_or(".");
+            Some(format!(
+                "[tool] finding {} in {}",
+                truncate_preview(pattern, 60),
+                truncate_preview(path, 80)
+            ))
+        }
+        _ => None,
     }
 }
 

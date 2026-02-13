@@ -43,11 +43,7 @@ impl UiRenderer {
 
         if dirty || refresh_due {
             self.terminal.draw(state, &self.render_meta)?;
-            if is_running {
-                self.running_status_last_draw_at = Some(now);
-            } else {
-                self.running_status_last_draw_at = None;
-            }
+            self.running_status_last_draw_at = is_running.then_some(now);
         }
 
         Ok(())

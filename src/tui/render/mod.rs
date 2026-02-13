@@ -96,23 +96,15 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
     let interval_ms = RUNNING_BADGE_TOGGLE_INTERVAL.as_millis().max(1);
     let highlight_o = (elapsed.as_millis() / interval_ms).is_multiple_of(2);
     let elapsed_seconds = elapsed.as_secs();
-    let bracket_style = Style::default()
-        .fg(OX_BADGE_BRACKET_COLOR)
-        .add_modifier(Modifier::BOLD);
+
+    let bold = |color| Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let plain = |color| Style::default().fg(color);
+    let bracket_style = bold(OX_BADGE_BRACKET_COLOR);
+
     let (o_style, x_style) = if highlight_o {
-        (
-            Style::default()
-                .fg(OX_BADGE_O_COLOR)
-                .add_modifier(Modifier::BOLD),
-            Style::default().fg(OX_BADGE_X_COLOR),
-        )
+        (bold(OX_BADGE_O_COLOR), plain(OX_BADGE_X_COLOR))
     } else {
-        (
-            Style::default().fg(OX_BADGE_O_COLOR),
-            Style::default()
-                .fg(OX_BADGE_X_COLOR)
-                .add_modifier(Modifier::BOLD),
-        )
+        (plain(OX_BADGE_O_COLOR), bold(OX_BADGE_X_COLOR))
     };
 
     Line::from(vec![
@@ -127,7 +119,6 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line};
-    use ratatui::style::Color;
     use std::time::Duration;
 
     #[test]
@@ -148,7 +139,5 @@ mod tests {
 
         assert_eq!(line.spans[1].style.fg, Some(OX_BADGE_O_COLOR));
         assert_eq!(line.spans[2].style.fg, Some(OX_BADGE_X_COLOR));
-        assert_eq!(line.spans[1].style.fg, Some(Color::Red));
-        assert_eq!(line.spans[2].style.fg, Some(Color::Cyan));
     }
 }
