@@ -36,16 +36,11 @@ pub struct TuiState {
     dirty: bool,
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
-    show_thinking_traces: bool,
     reasoning_trace_open: bool,
 }
 
 impl TuiState {
     pub fn new() -> Self {
-        Self::with_show_thinking_traces(false)
-    }
-
-    pub fn with_show_thinking_traces(show_thinking_traces: bool) -> Self {
         Self {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
@@ -53,7 +48,6 @@ impl TuiState {
             dirty: true,
             running_started_at: None,
             run_phase: RunPhase::Thinking,
-            show_thinking_traces,
             reasoning_trace_open: false,
         }
     }
@@ -106,9 +100,7 @@ impl TuiState {
             }
             CoreEvent::AgentReasoningDelta(delta) => {
                 self.run_phase = RunPhase::Thinking;
-                if self.show_thinking_traces {
-                    self.append_reasoning_delta(&delta);
-                }
+                self.append_reasoning_delta(&delta);
                 self.mark_dirty();
             }
             CoreEvent::AgentTextDelta(delta) => {
@@ -438,8 +430,8 @@ mod tests {
     }
 
     #[test]
-    fn appends_reasoning_trace_when_enabled() {
-        let mut state = TuiState::with_show_thinking_traces(true);
+    fn appends_reasoning_trace_from_reasoning_deltas() {
+        let mut state = TuiState::new();
         state.handle_agent_event(CoreEvent::AgentTurnStart);
         state.handle_agent_event(CoreEvent::AgentReasoningDelta("step one".to_string()));
         state.handle_agent_event(CoreEvent::AgentReasoningDelta(" + step two".to_string()));
