@@ -1,16 +1,38 @@
 # ox
 
+[![CI](https://github.com/muneebshahid/ox/actions/workflows/ci.yml/badge.svg)](https://github.com/muneebshahid/ox/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ![ox screenshot](assets/img.png)
 
-A minimal CLI coding agent in Rust. Connects to OpenAI's Responses API with streaming, provides an interactive REPL, and executes tools autonomously in an agent loop.
+A minimal CLI coding agent in Rust. It connects to OpenAI's Responses API with streaming, provides an interactive REPL, and executes tools autonomously in an agent loop.
 
-## Setup
+## Project Status
+
+Early-stage and evolving quickly. The core loop and TUI are usable, but APIs and internals may change between releases.
+
+## Prerequisites
+
+- Rust `1.87+` (edition 2024)
+- `cargo`
+- Optional tooling used by built-in tools:
+  - `rg` (ripgrep) for fast content search
+  - `fd` for fast file discovery
+
+If `rg` or `fd` are missing, `ox` falls back to `grep` and `find`.
+
+## Quickstart
 
 ```bash
+git clone https://github.com/muneebshahid/ox.git
+cd ox
 cp .env.example .env
+cargo run
 ```
 
-Choose one auth mode via `AUTH_MODE`:
+## Configuration
+
+Choose one auth mode via `AUTH_MODE` in `.env`.
 
 ### API key mode (`AUTH_MODE=api`)
 
@@ -29,7 +51,7 @@ OPENAI_REASONING=medium
 
 ### Subscription mode (`AUTH_MODE=subscription`)
 
-Use your Codex/ChatGPT auth tokens (`https://chatgpt.com/backend-api/codex/responses`):
+Use Codex/ChatGPT auth tokens (`https://chatgpt.com/backend-api/codex/responses`):
 
 ```bash
 codex login
@@ -45,11 +67,11 @@ OPENAI_MODEL=gpt-5.3-codex
 OPENAI_REASONING=high
 ```
 
-Notes:
+Token loading behavior:
 
-- Token file is loaded from `CODEX_HOME/auth.json` if `CODEX_HOME` is set.
-- Otherwise it loads from `~/.codex/auth.json`.
-- If the subscription access token is expired, ox refreshes it and writes updated tokens back to the same file.
+- Loads `CODEX_HOME/auth.json` when `CODEX_HOME` is set.
+- Otherwise loads `~/.codex/auth.json`.
+- If the subscription access token is expired, `ox` refreshes it and writes updated tokens back to the same file.
 
 ## Usage
 
@@ -57,7 +79,7 @@ Notes:
 cargo run
 ```
 
-```
+```text
 > read src/main.rs and explain what it does
 Calling read_file...
 The main entry point sets up a REPL loop that...
@@ -76,7 +98,7 @@ CLI flags:
 ox [--session <name>] [--list-sessions]
 ```
 
-## Tools
+## Built-in Tools
 
 | Tool         | Description                                                 |
 | ------------ | ----------------------------------------------------------- |
@@ -88,10 +110,42 @@ ox [--session <name>] [--list-sessions]
 | `find`       | Find files by glob pattern with `fd` (falls back to `find`) |
 | `bash`       | Execute shell commands                                      |
 
+## Architecture Overview
+
+Top-level responsibilities are split into focused modules:
+
+- `src/agent`: streaming responses, event processing, and agent loop behavior
+- `src/tui`: terminal UI state, rendering, and orchestration
+- `src/events`: event types, hub, and bridge wiring
+- `src/tools`: tool implementations exposed to the model (`read_file`, `bash`, etc.)
+- `src/auth`: API key/subscription auth and token storage behavior
+- `src/session`: session naming, persistence, and lifecycle management
+
 ## Development
 
 ```bash
-cargo build
-make lint      # clippy with pedantic + nursery
-cargo test
+cargo fmt
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
 ```
+
+## Security Notes
+
+`ox` includes a `bash` tool that can execute arbitrary shell commands as part of the agent loop. Run it only in trusted repositories and isolated environments.
+
+If you find a vulnerability, see [`SECURITY.md`](SECURITY.md).
+
+## Contributing
+
+Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## License
+
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE).
+
+## Roadmap
+
+- Stabilize module boundaries across `agent`, `events`, and `tui`
+- Add architecture docs for session/event ownership
+- Improve test coverage for end-to-end streaming and tool orchestration
+- Prepare first tagged release (`v0.1.0`)
