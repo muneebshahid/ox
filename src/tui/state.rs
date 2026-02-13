@@ -450,7 +450,10 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentReasoningDelta(" + step two".to_string()));
         state.handle_agent_event(CoreEvent::AgentTextDelta("final".to_string()));
 
-        assert_eq!(state.transcript(), "[thinking] step one + step two\n\nfinal");
+        assert_eq!(
+            state.transcript(),
+            "[thinking] step one + step two\n\nfinal"
+        );
     }
 
     #[test]
