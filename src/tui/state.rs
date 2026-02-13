@@ -105,6 +105,9 @@ impl TuiState {
             }
             CoreEvent::AgentTextDelta(delta) => {
                 self.close_reasoning_trace();
+                if !matches!(self.run_phase, RunPhase::Responding) {
+                    self.ensure_message_gap();
+                }
                 self.run_phase = RunPhase::Responding;
                 self.transcript.push_str(&delta);
                 self.mark_dirty();
@@ -208,9 +211,7 @@ impl TuiState {
         }
 
         if !self.reasoning_trace_open {
-            if !self.transcript.is_empty() && !self.transcript.ends_with('\n') {
-                self.transcript.push('\n');
-            }
+            self.ensure_message_gap();
             self.transcript.push_str("[thinking] ");
             self.reasoning_trace_open = true;
         }
@@ -227,6 +228,7 @@ impl TuiState {
     }
 
     fn push_user_input(&mut self, input: &str) {
+        self.ensure_message_gap();
         self.push_transcript_line(&format!("> {input}"));
     }
 
@@ -236,6 +238,17 @@ impl TuiState {
         }
         self.transcript.push_str(line);
         self.transcript.push('\n');
+    }
+
+    fn ensure_message_gap(&mut self) {
+        if self.transcript.is_empty() || self.transcript.ends_with("\n\n") {
+            return;
+        }
+        if self.transcript.ends_with('\n') {
+            self.transcript.push('\n');
+        } else {
+            self.transcript.push_str("\n\n");
+        }
     }
 
     const fn mark_dirty(&mut self) {
@@ -437,6 +450,32 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentReasoningDelta(" + step two".to_string()));
         state.handle_agent_event(CoreEvent::AgentTextDelta("final".to_string()));
 
-        assert_eq!(state.transcript(), "[thinking] step one + step two\nfinal");
+        assert_eq!(state.transcript(), "[thinking] step one + step two\n\nfinal");
+    }
+
+    #[test]
+    fn inserts_blank_line_between_user_and_assistant_messages() {
+        let mut state = TuiState::new();
+        state.handle_user_input(UserInput::Insert('h'));
+        state.handle_user_input(UserInput::Insert('i'));
+        let _ = state.handle_user_input(UserInput::Submit);
+
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
+        state.handle_agent_event(CoreEvent::AgentTurnEnd);
+
+        assert_eq!(state.transcript(), "> hi\n\nhello\n");
+    }
+
+    #[test]
+    fn inserts_blank_line_between_assistant_and_next_user_message() {
+        let mut state = TuiState::new();
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
+        state.handle_agent_event(CoreEvent::AgentTurnEnd);
+        state.handle_user_input(UserInput::Paste("next".to_string()));
+        let _ = state.handle_user_input(UserInput::Submit);
+
+        assert_eq!(state.transcript(), "hello\n\n> next\n");
     }
 }
