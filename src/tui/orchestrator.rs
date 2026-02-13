@@ -15,6 +15,7 @@ use futures::StreamExt;
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
+    render::RenderMeta,
     state::{StateCommand, TuiState, UserInput},
     terminal::TerminalGuard,
 };
@@ -29,6 +30,7 @@ enum TurnExit {
 struct UiRuntime {
     terminal: TerminalGuard,
     state: TuiState,
+    render_meta: RenderMeta,
     subscription: Subscription,
     input_events: EventStream,
     ticker: time::Interval,
@@ -36,9 +38,17 @@ struct UiRuntime {
 
 impl UiRuntime {
     fn new(app: &AppContext) -> Result<Self> {
+        let cwd = current_dir_for_banner();
+        let git_branch = current_git_branch();
         Ok(Self {
             terminal: TerminalGuard::new()?,
             state: TuiState::new(),
+            render_meta: RenderMeta::new(
+                app.auth.model().to_string(),
+                app.auth.mode_name().to_string(),
+                cwd,
+                git_branch,
+            ),
             subscription: app.agent_bridge.subscribe(),
             input_events: EventStream::new(),
             ticker: create_ticker(),
@@ -47,10 +57,40 @@ impl UiRuntime {
 
     fn draw_if_dirty(&mut self) -> Result<()> {
         if self.state.take_dirty() {
-            self.terminal.draw(&self.state)?;
+            self.terminal.draw(&self.state, &self.render_meta)?;
         }
         Ok(())
     }
+}
+
+fn current_dir_for_banner() -> String {
+    let path =
+        std::env::current_dir().map_or_else(|_| ".".to_string(), |path| path.display().to_string());
+
+    if let Ok(home) = std::env::var("HOME")
+        && path.starts_with(&home)
+    {
+        return format!("~{}", &path[home.len()..]);
+    }
+
+    path
+}
+
+fn current_git_branch() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return None;
+    }
+    Some(branch)
 }
 
 pub async fn run(app: &AppContext, session_state: &mut SessionManager) -> Result<()> {
@@ -85,7 +125,7 @@ async fn run_main_loop(
                 ui.draw_if_dirty()?;
             }
             interrupt = tokio::signal::ctrl_c() => {
-                handle_interrupt(&mut ui.state, &mut ui.terminal, interrupt)?;
+                handle_interrupt(&mut ui.state, &ui.render_meta, &mut ui.terminal, interrupt)?;
                 break;
             }
         }
@@ -138,6 +178,7 @@ fn handle_core_event(state: &mut TuiState, event: Result<CoreEvent, RecvError>) 
 
 fn handle_interrupt(
     state: &mut TuiState,
+    render_meta: &RenderMeta,
     terminal: &mut TerminalGuard,
     interrupt: Result<(), std::io::Error>,
 ) -> Result<()> {
@@ -146,7 +187,7 @@ fn handle_interrupt(
         Err(err) => format!("Ctrl+C error: {err}"),
     };
     state.handle_agent_event(CoreEvent::Error(message));
-    terminal.draw(state)?;
+    terminal.draw(state, render_meta)?;
     Ok(())
 }
 
@@ -179,7 +220,7 @@ async fn run_active_turn(
                     ui.draw_if_dirty()?;
                 }
                 interrupt = tokio::signal::ctrl_c() => {
-                    handle_interrupt(&mut ui.state, &mut ui.terminal, interrupt)?;
+                    handle_interrupt(&mut ui.state, &ui.render_meta, &mut ui.terminal, interrupt)?;
                     break None;
                 }
             }

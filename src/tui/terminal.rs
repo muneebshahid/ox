@@ -7,7 +7,10 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use super::{render, state::TuiState};
+use super::{
+    render::{self, RenderMeta},
+    state::TuiState,
+};
 
 pub(super) struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
@@ -23,8 +26,9 @@ impl TerminalGuard {
         Ok(Self { terminal })
     }
 
-    pub(super) fn draw(&mut self, state: &TuiState) -> Result<()> {
-        self.terminal.draw(|frame| render::draw(frame, state))?;
+    pub(super) fn draw(&mut self, state: &TuiState, meta: &RenderMeta) -> Result<()> {
+        self.terminal
+            .draw(|frame| render::draw(frame, state, meta))?;
         Ok(())
     }
 }
