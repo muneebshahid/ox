@@ -3,7 +3,9 @@
 [![CI](https://github.com/muneebshahid/ox/actions/workflows/ci.yml/badge.svg)](https://github.com/muneebshahid/ox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-![ox screenshot](assets/img.png)
+| Screenshot |
+| :--------: |
+| ![ox screenshot](assets/img-readme.png) |
 
 A minimal CLI coding agent in Rust. It connects to OpenAI's Responses API with streaming, provides an interactive REPL, and executes tools autonomously in an agent loop.
 
