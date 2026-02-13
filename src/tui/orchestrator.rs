@@ -40,6 +40,7 @@ impl UiRuntime {
             state: TuiState::new(),
             render_meta: RenderMeta::new(
                 app.auth.model().to_string(),
+                app.auth.reasoning_setting().to_string(),
                 app.auth.mode_name().to_string(),
                 cwd,
                 git_branch,
