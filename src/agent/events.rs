@@ -6,6 +6,15 @@ pub(super) enum StreamEvent {
     #[serde(rename = "response.output_text.delta")]
     TextDelta { delta: String },
 
+    #[serde(rename = "response.reasoning_summary_part.added")]
+    ReasoningSummaryPartAdded,
+
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ReasoningSummaryTextDelta { delta: String },
+
+    #[serde(rename = "response.reasoning_summary_part.done")]
+    ReasoningSummaryPartDone,
+
     #[serde(rename = "response.output_item.done")]
     OutputItemDone { item: serde_json::Value },
 

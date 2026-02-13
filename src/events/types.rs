@@ -6,6 +6,7 @@ pub enum CoreEvent {
     AgentTurnStart,
     AgentTurnEnd,
     AgentTextDelta(String),
+    AgentReasoningDelta(String),
     AgentToolCallStart {
         call_id: String,
         tool_name: String,

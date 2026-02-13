@@ -20,6 +20,11 @@ impl AgentEventBridge {
             .publish(CoreEvent::AgentTextDelta(delta.to_string()));
     }
 
+    pub fn emit_reasoning_delta(&self, delta: &str) {
+        self.hub
+            .publish(CoreEvent::AgentReasoningDelta(delta.to_string()));
+    }
+
     pub fn emit_tool_call_start(&self, call_id: &str, tool_name: &str, args: &str) {
         self.hub.publish(CoreEvent::AgentToolCallStart {
             call_id: call_id.to_string(),

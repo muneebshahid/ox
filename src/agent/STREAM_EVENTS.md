@@ -22,6 +22,65 @@ This file lists all Responses streaming events currently handled by `ox`.
 
 - Fields used by `ox`: `delta`.
 
+1b. `response.reasoning_summary_text.delta`
+
+- Behavior: emits `CoreEvent::AgentReasoningDelta`.
+- Representative full event:
+
+```json
+{
+  "type": "response.reasoning_summary_text.delta",
+  "response_id": "resp_123",
+  "output_index": 0,
+  "item_id": "rs_1",
+  "summary_index": 0,
+  "delta": "**Planning** check files"
+}
+```
+
+- Fields used by `ox`: `delta`.
+
+1c. `response.reasoning_summary_part.added`
+
+- Behavior: currently no-op (section boundary marker only).
+- Representative full event:
+
+```json
+{
+  "type": "response.reasoning_summary_part.added",
+  "response_id": "resp_123",
+  "output_index": 0,
+  "item_id": "rs_1",
+  "summary_index": 1,
+  "part": { "type": "summary_text", "text": "" }
+}
+```
+
+- Fields used by `ox`: none.
+
+1d. `response.reasoning_summary_part.done`
+
+- Behavior: emits `CoreEvent::AgentReasoningDelta("\n\n")` to separate reasoning sections.
+- Representative full event:
+
+```json
+{
+  "type": "response.reasoning_summary_part.done",
+  "response_id": "resp_123",
+  "output_index": 0,
+  "item_id": "rs_1",
+  "summary_index": 0,
+  "part": { "type": "summary_text", "text": "**Planning** check files" }
+}
+```
+
+- Fields used by `ox`: none (fixed separator emission only).
+
+Related marker summary:
+
+- `response.reasoning_summary_part.added`: no-op.
+- `response.reasoning_summary_part.done`: emits `CoreEvent::AgentReasoningDelta("\n\n")`.
+
 2. `response.output_item.done`
 
 - Behavior:

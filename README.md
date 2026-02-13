@@ -1,5 +1,7 @@
 # ox
 
+![ox screenshot](assets/img.png)
+
 A minimal CLI coding agent in Rust. Connects to OpenAI's Responses API with streaming, provides an interactive REPL, and executes tools autonomously in an agent loop.
 
 ## Setup

@@ -31,8 +31,10 @@ impl<'a> EventHandler<'a> {
 
     pub(super) fn handle_event(&mut self, event: StreamEvent) {
         match event {
-            StreamEvent::Ignored => {}
+            StreamEvent::Ignored | StreamEvent::ReasoningSummaryPartAdded => {}
             StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta),
+            StreamEvent::ReasoningSummaryTextDelta { delta } => self.handle_reasoning_delta(&delta),
+            StreamEvent::ReasoningSummaryPartDone => self.handle_reasoning_part_done(),
             StreamEvent::OutputItemDone { item } => self.handle_output_item_done(&item),
             StreamEvent::ResponseCompleted { response }
             | StreamEvent::ResponseDone { response } => {
@@ -64,6 +66,18 @@ impl<'a> EventHandler<'a> {
     fn handle_text_delta(&self, delta: &str) {
         if let Some(bridge) = self.bridge {
             bridge.emit_text_delta(delta);
+        }
+    }
+
+    fn handle_reasoning_delta(&self, delta: &str) {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_reasoning_delta(delta);
+        }
+    }
+
+    fn handle_reasoning_part_done(&self) {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_reasoning_delta("\n\n");
         }
     }
 
@@ -365,6 +379,30 @@ mod tests {
                 call_id: "call_test".to_string(),
                 tool_name: "ls".to_string(),
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_reasoning_delta_event() {
+        let mut history = Vec::new();
+        let hub = EventHub::new(8);
+        let mut sub = hub.subscribe();
+        let bridge = AgentEventBridge::new(hub);
+        let mut handler = EventHandler::new(&mut history, Some(&bridge));
+
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
+                        "type": "response.reasoning_summary_text.delta",
+                        "delta": "Analyzing..."
+                    }"#,
+            )
+            .expect("parse reasoning summary delta event"),
+        );
+
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentReasoningDelta("Analyzing...".to_string()))
         );
     }
 }
