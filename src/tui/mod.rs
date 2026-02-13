@@ -1,3 +1,4 @@
+mod input;
 mod orchestrator;
 mod render;
 mod state;

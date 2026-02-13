@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::{
     agent,
@@ -10,68 +10,45 @@ use crate::{
     session::SessionManager,
 };
 use anyhow::Result;
-use crossterm::event::{Event as CEvent, EventStream, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event as CEvent, EventStream};
 use futures::StreamExt;
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
+    input,
     render::RenderMeta,
-    state::{StateCommand, TuiState, UserInput},
-    terminal::TerminalGuard,
+    state::{StateCommand, TuiState},
+    terminal::UiRenderer,
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
-const RUNNING_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 struct UiRuntime {
-    terminal: TerminalGuard,
+    renderer: UiRenderer,
     state: TuiState,
-    render_meta: RenderMeta,
     subscription: Subscription,
     input_events: EventStream,
     ticker: time::Interval,
-    running_status_last_draw_at: Option<Instant>,
 }
 
 impl UiRuntime {
     fn new(app: &AppContext) -> Result<Self> {
         let cwd = current_dir_for_banner();
         let git_branch = current_git_branch();
+        let render_meta = RenderMeta::new(
+            app.auth.model().to_string(),
+            app.auth.reasoning_setting().to_string(),
+            app.auth.mode_name().to_string(),
+            cwd,
+            git_branch,
+        );
         Ok(Self {
-            terminal: TerminalGuard::new()?,
+            renderer: UiRenderer::new(render_meta)?,
             state: TuiState::new(),
-            render_meta: RenderMeta::new(
-                app.auth.model().to_string(),
-                app.auth.reasoning_setting().to_string(),
-                app.auth.mode_name().to_string(),
-                cwd,
-                git_branch,
-            ),
             subscription: app.agent_bridge.subscribe(),
             input_events: EventStream::new(),
             ticker: create_ticker(),
-            running_status_last_draw_at: None,
         })
-    }
-
-    fn draw_if_dirty(&mut self) -> Result<()> {
-        let now = Instant::now();
-        let is_running = self.state.status_is_running();
-        let refresh_due = is_running
-            && self
-                .running_status_last_draw_at
-                .is_none_or(|last| now.duration_since(last) >= RUNNING_STATUS_REFRESH_INTERVAL);
-        let dirty = self.state.take_dirty();
-
-        if dirty || refresh_due {
-            self.terminal.draw(&self.state, &self.render_meta)?;
-            if is_running {
-                self.running_status_last_draw_at = Some(now);
-            } else {
-                self.running_status_last_draw_at = None;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -105,15 +82,15 @@ fn current_git_branch() -> Option<String> {
     Some(branch)
 }
 
-pub async fn run(app: &AppContext, session_state: &mut SessionManager) -> Result<()> {
-    let mut ui = UiRuntime::new(app)?;
-    run_main_loop(app, session_state, &mut ui).await
-}
-
 fn create_ticker() -> time::Interval {
     let mut ticker = time::interval(Duration::from_millis(REDRAW_INTERVAL_MS));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ticker
+}
+
+pub async fn run(app: &AppContext, session_state: &mut SessionManager) -> Result<()> {
+    let mut ui = UiRuntime::new(app)?;
+    run_main_loop(app, session_state, &mut ui).await
 }
 
 async fn run_main_loop(
@@ -122,25 +99,29 @@ async fn run_main_loop(
     ui: &mut UiRuntime,
 ) -> Result<()> {
     loop {
+        let mut should_exit = false;
         tokio::select! {
             maybe_event = ui.input_events.next() => {
                 if handle_main_input_event(app, session_state, ui, maybe_event).await? {
-                    break;
+                    should_exit = true;
                 }
             }
             event = ui.subscription.recv() => {
                 if handle_core_event(&mut ui.state, event) {
-                    break;
+                    should_exit = true;
                 }
-                ui.draw_if_dirty()?;
             }
             _ = ui.ticker.tick() => {
-                ui.draw_if_dirty()?;
             }
             interrupt = tokio::signal::ctrl_c() => {
-                handle_interrupt(ui, interrupt)?;
-                break;
+                handle_interrupt(ui, interrupt);
+                should_exit = true;
             }
+        }
+
+        ui.renderer.draw_if_needed(&mut ui.state)?;
+        if should_exit {
+            break;
         }
     }
 
@@ -158,7 +139,7 @@ async fn handle_main_input_event(
     };
 
     let command = match event_result {
-        Ok(event) => ui.state.handle_user_input(to_user_input(event)),
+        Ok(event) => ui.state.handle_user_input(input::to_user_input(event)),
         Err(err) => {
             ui.state
                 .handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
@@ -186,14 +167,12 @@ fn handle_core_event(state: &mut TuiState, event: Result<CoreEvent, RecvError>) 
     false
 }
 
-fn handle_interrupt(ui: &mut UiRuntime, interrupt: Result<(), std::io::Error>) -> Result<()> {
+fn handle_interrupt(ui: &mut UiRuntime, interrupt: Result<(), std::io::Error>) {
     let message = match interrupt {
         Ok(()) => "Interrupted".to_string(),
         Err(err) => format!("Ctrl+C error: {err}"),
     };
     ui.state.handle_agent_event(CoreEvent::Error(message));
-    ui.draw_if_dirty()?;
-    Ok(())
 }
 
 async fn run_active_turn(
@@ -203,42 +182,46 @@ async fn run_active_turn(
     ui: &mut UiRuntime,
 ) -> Result<bool> {
     let mut run_future = Box::pin(agent::run(app, session_state, input));
+    let mut agent_result = None;
+    let mut should_exit = false;
 
-    let agent_result = loop {
+    while agent_result.is_none() && !should_exit {
         tokio::select! {
-            result = &mut run_future => break Some(result),
+            result = &mut run_future => {
+                agent_result = Some(result);
+            }
             maybe_event = ui.input_events.next() => {
                 let Some(event_result) = maybe_event else {
-                    break None;
+                    should_exit = true;
+                    continue;
                 };
                 if should_quit_during_active_turn(&mut ui.state, event_result) {
-                    break None;
+                    should_exit = true;
                 }
             }
             event = ui.subscription.recv() => {
                 if handle_core_event(&mut ui.state, event) {
-                    break None;
+                    should_exit = true;
                 }
-                ui.draw_if_dirty()?;
             }
             _ = ui.ticker.tick() => {
-                ui.draw_if_dirty()?;
             }
             interrupt = tokio::signal::ctrl_c() => {
-                handle_interrupt(ui, interrupt)?;
-                break None;
+                handle_interrupt(ui, interrupt);
+                should_exit = true;
             }
         }
-    };
+        ui.renderer.draw_if_needed(&mut ui.state)?;
+    }
 
     match agent_result {
-        Some(Ok(())) => Ok(false),
-        Some(Err(err)) => {
+        Some(Ok(())) if !should_exit => Ok(false),
+        Some(Err(err)) if !should_exit => {
             ui.state
                 .handle_agent_event(CoreEvent::Error(format!("Error: {err}")));
             Ok(false)
         }
-        None => Ok(true),
+        _ => Ok(true),
     }
 }
 
@@ -247,36 +230,10 @@ fn should_quit_during_active_turn(
     event_result: Result<CEvent, std::io::Error>,
 ) -> bool {
     match event_result {
-        Ok(CEvent::Key(key)) => matches!(to_user_input_from_key(key), UserInput::Quit),
-        Ok(_) => false,
+        Ok(event) => input::is_quit_event(&event),
         Err(err) => {
             state.handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
             false
         }
-    }
-}
-
-fn to_user_input(event: CEvent) -> UserInput {
-    match event {
-        CEvent::Key(key) => to_user_input_from_key(key),
-        CEvent::Paste(pasted) => UserInput::Paste(pasted),
-        _ => UserInput::Ignore,
-    }
-}
-
-fn to_user_input_from_key(key: KeyEvent) -> UserInput {
-    match key.code {
-        KeyCode::Esc => UserInput::Quit,
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => UserInput::Quit,
-        KeyCode::Enter => UserInput::Submit,
-        KeyCode::Backspace => UserInput::Backspace,
-        KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
-        {
-            UserInput::Insert(c)
-        }
-        _ => UserInput::Ignore,
     }
 }
