@@ -47,28 +47,18 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) {
     let max_output_height = area.height.saturating_sub(reserved_height).max(1);
     let output_height = count_wrapped_lines(&output.plain_lines, area.width).min(max_output_height);
 
-    if show_status {
-        let [output_area, status_area, input_area, _rest] = Layout::vertical([
-            Constraint::Length(output_height),
-            Constraint::Length(1),
-            Constraint::Length(INPUT_HEIGHT),
-            Constraint::Min(0),
-        ])
-        .areas(area);
-        draw_output(frame, &output, output_area);
-        draw_status(frame, state, status_area);
-        draw_input(frame, state, input_area);
-        place_input_cursor(frame, state, input_area);
-        return;
-    }
-
-    let [output_area, input_area, _rest] = Layout::vertical([
+    let [output_area, status_area, input_area, _rest] = Layout::vertical([
         Constraint::Length(output_height),
+        Constraint::Length(status_height),
         Constraint::Length(INPUT_HEIGHT),
         Constraint::Min(0),
     ])
     .areas(area);
+
     draw_output(frame, &output, output_area);
+    if show_status {
+        draw_status(frame, state, status_area);
+    }
     draw_input(frame, state, input_area);
     place_input_cursor(frame, state, input_area);
 }
@@ -136,14 +126,14 @@ fn welcome_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
         let plain_line = format!("{logo_text}{}{}", " ".repeat(padding), meta_text);
         plain_lines.push(plain_line);
 
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        if let Some(color) = logo_colors.get(row_idx) {
-            let style = Style::default().fg(*color).add_modifier(Modifier::BOLD);
-            spans.push(Span::styled(logo_text.to_string(), style));
-        } else {
-            spans.push(Span::raw(logo_text.to_string()));
-        }
-        spans.push(Span::raw(" ".repeat(padding)));
+        let logo_style = match logo_colors.get(row_idx) {
+            Some(color) => Style::default().fg(*color).add_modifier(Modifier::BOLD),
+            None => Style::default(),
+        };
+        let mut spans = vec![
+            Span::styled(logo_text.to_string(), logo_style),
+            Span::raw(" ".repeat(padding)),
+        ];
         if let Some((label, value)) = meta_row {
             spans.push(Span::styled(format!("{label:<6}"), label_style));
             spans.push(Span::raw(": "));
@@ -197,13 +187,12 @@ fn count_wrapped_lines(lines: &[String], width: u16) -> u16 {
         return 1;
     }
 
+    let width = usize::from(width);
     lines
         .iter()
         .map(|line| {
             let chars = line.chars().count().max(1);
-            let width = usize::from(width);
-            let wrapped = chars.saturating_add(width.saturating_sub(1)) / width;
-            u16::try_from(wrapped).unwrap_or(u16::MAX)
+            u16::try_from(chars.div_ceil(width)).unwrap_or(u16::MAX)
         })
         .fold(0_u16, u16::saturating_add)
         .max(1)

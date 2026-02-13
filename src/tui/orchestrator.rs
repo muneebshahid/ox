@@ -22,11 +22,6 @@ use super::{
 
 const REDRAW_INTERVAL_MS: u64 = 33;
 
-enum TurnExit {
-    Continue,
-    Quit,
-}
-
 struct UiRuntime {
     terminal: TerminalGuard,
     state: TuiState,
@@ -125,7 +120,7 @@ async fn run_main_loop(
                 ui.draw_if_dirty()?;
             }
             interrupt = tokio::signal::ctrl_c() => {
-                handle_interrupt(&mut ui.state, &ui.render_meta, &mut ui.terminal, interrupt)?;
+                handle_interrupt(ui, interrupt)?;
                 break;
             }
         }
@@ -156,10 +151,7 @@ async fn handle_main_input_event(
     match command {
         StateCommand::None => Ok(false),
         StateCommand::Quit => Ok(true),
-        StateCommand::Submit(input) => {
-            let exit = run_active_turn(app, session_state, &input, ui).await?;
-            Ok(matches!(exit, TurnExit::Quit))
-        }
+        StateCommand::Submit(input) => run_active_turn(app, session_state, &input, ui).await,
     }
 }
 
@@ -176,18 +168,13 @@ fn handle_core_event(state: &mut TuiState, event: Result<CoreEvent, RecvError>) 
     false
 }
 
-fn handle_interrupt(
-    state: &mut TuiState,
-    render_meta: &RenderMeta,
-    terminal: &mut TerminalGuard,
-    interrupt: Result<(), std::io::Error>,
-) -> Result<()> {
+fn handle_interrupt(ui: &mut UiRuntime, interrupt: Result<(), std::io::Error>) -> Result<()> {
     let message = match interrupt {
         Ok(()) => "Interrupted".to_string(),
         Err(err) => format!("Ctrl+C error: {err}"),
     };
-    state.handle_agent_event(CoreEvent::Error(message));
-    terminal.draw(state, render_meta)?;
+    ui.state.handle_agent_event(CoreEvent::Error(message));
+    ui.terminal.draw(&ui.state, &ui.render_meta)?;
     Ok(())
 }
 
@@ -196,46 +183,43 @@ async fn run_active_turn(
     session_state: &mut SessionManager,
     input: &str,
     ui: &mut UiRuntime,
-) -> Result<TurnExit> {
-    let turn_result = {
-        let mut run_future = Box::pin(agent::run(app, session_state, input));
+) -> Result<bool> {
+    let mut run_future = Box::pin(agent::run(app, session_state, input));
 
-        loop {
-            tokio::select! {
-                run_result = &mut run_future => break Some(run_result),
-                maybe_event = ui.input_events.next() => {
-                    let Some(event_result) = maybe_event else {
-                        break None;
-                    };
-                    if should_quit_during_active_turn(&mut ui.state, event_result) {
-                        break None;
-                    }
-                }
-                event = ui.subscription.recv() => {
-                    if handle_core_event(&mut ui.state, event) {
-                        break None;
-                    }
-                }
-                _ = ui.ticker.tick() => {
-                    ui.draw_if_dirty()?;
-                }
-                interrupt = tokio::signal::ctrl_c() => {
-                    handle_interrupt(&mut ui.state, &ui.render_meta, &mut ui.terminal, interrupt)?;
+    let agent_result = loop {
+        tokio::select! {
+            result = &mut run_future => break Some(result),
+            maybe_event = ui.input_events.next() => {
+                let Some(event_result) = maybe_event else {
+                    break None;
+                };
+                if should_quit_during_active_turn(&mut ui.state, event_result) {
                     break None;
                 }
+            }
+            event = ui.subscription.recv() => {
+                if handle_core_event(&mut ui.state, event) {
+                    break None;
+                }
+            }
+            _ = ui.ticker.tick() => {
+                ui.draw_if_dirty()?;
+            }
+            interrupt = tokio::signal::ctrl_c() => {
+                handle_interrupt(ui, interrupt)?;
+                break None;
             }
         }
     };
 
-    match turn_result {
-        Some(run_result) => {
-            if let Err(err) = run_result {
-                ui.state
-                    .handle_agent_event(CoreEvent::Error(format!("Error: {err}")));
-            }
-            Ok(TurnExit::Continue)
+    match agent_result {
+        Some(Ok(())) => Ok(false),
+        Some(Err(err)) => {
+            ui.state
+                .handle_agent_event(CoreEvent::Error(format!("Error: {err}")));
+            Ok(false)
         }
-        None => Ok(TurnExit::Quit),
+        None => Ok(true),
     }
 }
 
