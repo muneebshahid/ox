@@ -79,3 +79,13 @@ fn parse_event_accepts_error() {
     let event = parse_event(data).expect("event should parse");
     assert!(matches!(event, StreamEvent::Error { .. }));
 }
+
+#[test]
+fn parse_event_accepts_reasoning_summary_delta() {
+    let data = r#"{"type":"response.reasoning_summary_text.delta","delta":"step"}"#;
+    let event = parse_event(data).expect("event should parse");
+    assert!(matches!(
+        event,
+        StreamEvent::ReasoningSummaryTextDelta { .. }
+    ));
+}

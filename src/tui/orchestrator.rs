@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{
     agent,
@@ -21,6 +21,7 @@ use super::{
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
+const RUNNING_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
 struct UiRuntime {
     terminal: TerminalGuard,
@@ -29,15 +30,22 @@ struct UiRuntime {
     subscription: Subscription,
     input_events: EventStream,
     ticker: time::Interval,
+    running_status_last_draw_at: Option<Instant>,
 }
 
 impl UiRuntime {
     fn new(app: &AppContext) -> Result<Self> {
         let cwd = current_dir_for_banner();
         let git_branch = current_git_branch();
+        let show_thinking_traces = show_thinking_traces_enabled();
+        let state = if show_thinking_traces {
+            TuiState::with_show_thinking_traces(true)
+        } else {
+            TuiState::new()
+        };
         Ok(Self {
             terminal: TerminalGuard::new()?,
-            state: TuiState::new(),
+            state,
             render_meta: RenderMeta::new(
                 app.auth.model().to_string(),
                 app.auth.reasoning_setting().to_string(),
@@ -48,12 +56,26 @@ impl UiRuntime {
             subscription: app.agent_bridge.subscribe(),
             input_events: EventStream::new(),
             ticker: create_ticker(),
+            running_status_last_draw_at: None,
         })
     }
 
     fn draw_if_dirty(&mut self) -> Result<()> {
-        if self.state.take_dirty() {
+        let now = Instant::now();
+        let is_running = self.state.status_is_running();
+        let refresh_due = is_running
+            && self.running_status_last_draw_at.is_none_or(|last| {
+                now.duration_since(last) >= RUNNING_STATUS_REFRESH_INTERVAL
+            });
+        let dirty = self.state.take_dirty();
+
+        if dirty || refresh_due {
             self.terminal.draw(&self.state, &self.render_meta)?;
+            if is_running {
+                self.running_status_last_draw_at = Some(now);
+            } else {
+                self.running_status_last_draw_at = None;
+            }
         }
         Ok(())
     }
@@ -70,6 +92,10 @@ fn current_dir_for_banner() -> String {
     }
 
     path
+}
+
+fn show_thinking_traces_enabled() -> bool {
+    std::env::var("OX_SHOW_THINKING").is_ok_and(|value| value != "0")
 }
 
 fn current_git_branch() -> Option<String> {
@@ -116,6 +142,7 @@ async fn run_main_loop(
                 if handle_core_event(&mut ui.state, event) {
                     break;
                 }
+                ui.draw_if_dirty()?;
             }
             _ = ui.ticker.tick() => {
                 ui.draw_if_dirty()?;
@@ -175,7 +202,7 @@ fn handle_interrupt(ui: &mut UiRuntime, interrupt: Result<(), std::io::Error>) -
         Err(err) => format!("Ctrl+C error: {err}"),
     };
     ui.state.handle_agent_event(CoreEvent::Error(message));
-    ui.terminal.draw(&ui.state, &ui.render_meta)?;
+    ui.draw_if_dirty()?;
     Ok(())
 }
 
@@ -202,6 +229,7 @@ async fn run_active_turn(
                 if handle_core_event(&mut ui.state, event) {
                     break None;
                 }
+                ui.draw_if_dirty()?;
             }
             _ = ui.ticker.tick() => {
                 ui.draw_if_dirty()?;

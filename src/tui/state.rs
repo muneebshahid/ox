@@ -1,5 +1,9 @@
 use crate::events::types::CoreEvent;
 use std::fmt::Write as _;
+use std::time::{Duration, Instant};
+
+const STATUS_IDLE: &str = "Idle";
+const STATUS_RUNNING: &str = "Running";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum UserInput {
@@ -18,20 +22,39 @@ pub enum StateCommand {
     Quit,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunPhase {
+    Thinking,
+    Responding,
+    Tool { name: String },
+}
+
 pub struct TuiState {
     transcript: String,
     status: String,
     input: String,
     dirty: bool,
+    running_started_at: Option<Instant>,
+    run_phase: RunPhase,
+    show_thinking_traces: bool,
+    reasoning_trace_open: bool,
 }
 
 impl TuiState {
     pub fn new() -> Self {
+        Self::with_show_thinking_traces(false)
+    }
+
+    pub fn with_show_thinking_traces(show_thinking_traces: bool) -> Self {
         Self {
             transcript: String::new(),
-            status: "Idle".to_string(),
+            status: STATUS_IDLE.to_string(),
             input: String::new(),
             dirty: true,
+            running_started_at: None,
+            run_phase: RunPhase::Thinking,
+            show_thinking_traces,
+            reasoning_trace_open: false,
         }
     }
 
@@ -47,6 +70,30 @@ impl TuiState {
         &self.input
     }
 
+    pub fn status_is_running(&self) -> bool {
+        self.status == STATUS_RUNNING
+    }
+
+    pub fn running_phase_label(&self) -> String {
+        match &self.run_phase {
+            RunPhase::Thinking => "Thinking".to_string(),
+            RunPhase::Responding => "Responding".to_string(),
+            RunPhase::Tool { name } => {
+                if name.is_empty() {
+                    "Running tool".to_string()
+                } else {
+                    format!("Running {}", truncate_preview(name, 24))
+                }
+            }
+        }
+    }
+
+    pub fn running_elapsed(&self) -> Duration {
+        self.running_started_at
+            .as_ref()
+            .map_or(Duration::ZERO, Instant::elapsed)
+    }
+
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
     }
@@ -54,15 +101,25 @@ impl TuiState {
     pub fn handle_agent_event(&mut self, event: CoreEvent) {
         match event {
             CoreEvent::AgentTurnStart => {
-                self.status = "Running".to_string();
+                self.set_running_status();
+                self.mark_dirty();
+            }
+            CoreEvent::AgentReasoningDelta(delta) => {
+                self.run_phase = RunPhase::Thinking;
+                if self.show_thinking_traces {
+                    self.append_reasoning_delta(&delta);
+                }
                 self.mark_dirty();
             }
             CoreEvent::AgentTextDelta(delta) => {
+                self.close_reasoning_trace();
+                self.run_phase = RunPhase::Responding;
                 self.transcript.push_str(&delta);
                 self.mark_dirty();
             }
             CoreEvent::AgentTurnEnd => {
-                self.status = "Idle".to_string();
+                self.close_reasoning_trace();
+                self.set_idle_status();
                 if !self.transcript.ends_with('\n') {
                     self.transcript.push('\n');
                 }
@@ -71,14 +128,22 @@ impl TuiState {
             CoreEvent::AgentToolCallStart {
                 tool_name, args, ..
             } => {
+                self.close_reasoning_trace();
+                self.run_phase = RunPhase::Tool {
+                    name: tool_name.clone(),
+                };
                 let message = format_tool_start_message(&tool_name, &args);
                 self.push_transcript_line(&message);
                 self.mark_dirty();
             }
-            CoreEvent::AgentToolCallEnd { .. } | CoreEvent::Tick | CoreEvent::ShutdownRequested => {
+            CoreEvent::AgentToolCallEnd { .. } => {
+                self.run_phase = RunPhase::Thinking;
+                self.mark_dirty();
             }
+            CoreEvent::ShutdownRequested | CoreEvent::Tick => {}
             CoreEvent::Error(message) => {
-                self.status = message;
+                self.close_reasoning_trace();
+                self.set_status_message(message);
                 self.mark_dirty();
             }
         }
@@ -120,9 +185,53 @@ impl TuiState {
         }
 
         self.push_user_input(&submitted);
-        self.status = "Running".to_string();
+        self.set_running_status();
         self.mark_dirty();
         StateCommand::Submit(submitted)
+    }
+
+    fn set_running_status(&mut self) {
+        if self.running_started_at.is_none() {
+            self.running_started_at = Some(Instant::now());
+        }
+        self.status = STATUS_RUNNING.to_string();
+        self.run_phase = RunPhase::Thinking;
+    }
+
+    fn set_idle_status(&mut self) {
+        self.status = STATUS_IDLE.to_string();
+        self.running_started_at = None;
+        self.run_phase = RunPhase::Thinking;
+    }
+
+    fn set_status_message(&mut self, message: String) {
+        self.status = message;
+        self.running_started_at = None;
+        self.run_phase = RunPhase::Thinking;
+    }
+
+    fn append_reasoning_delta(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+
+        if !self.reasoning_trace_open {
+            if !self.transcript.is_empty() && !self.transcript.ends_with('\n') {
+                self.transcript.push('\n');
+            }
+            self.transcript.push_str("[thinking] ");
+            self.reasoning_trace_open = true;
+        }
+        self.transcript.push_str(delta);
+    }
+
+    fn close_reasoning_trace(&mut self) {
+        if self.reasoning_trace_open {
+            if !self.transcript.ends_with('\n') {
+                self.transcript.push('\n');
+            }
+            self.reasoning_trace_open = false;
+        }
     }
 
     fn push_user_input(&mut self, input: &str) {
@@ -306,5 +415,36 @@ mod tests {
         });
 
         assert_eq!(state.transcript(), "[tool] reading src/main.rs:10-14\n");
+    }
+
+    #[test]
+    fn running_phase_tracks_reasoning_text_and_tools() {
+        let mut state = TuiState::new();
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        assert_eq!(state.running_phase_label(), "Thinking");
+
+        state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
+        assert_eq!(state.running_phase_label(), "Responding");
+
+        state.handle_agent_event(CoreEvent::AgentReasoningDelta("step".to_string()));
+        assert_eq!(state.running_phase_label(), "Thinking");
+
+        state.handle_agent_event(CoreEvent::AgentToolCallStart {
+            call_id: "call_1".to_string(),
+            tool_name: "ls".to_string(),
+            args: "{}".to_string(),
+        });
+        assert_eq!(state.running_phase_label(), "Running ls");
+    }
+
+    #[test]
+    fn appends_reasoning_trace_when_enabled() {
+        let mut state = TuiState::with_show_thinking_traces(true);
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        state.handle_agent_event(CoreEvent::AgentReasoningDelta("step one".to_string()));
+        state.handle_agent_event(CoreEvent::AgentReasoningDelta(" + step two".to_string()));
+        state.handle_agent_event(CoreEvent::AgentTextDelta("final".to_string()));
+
+        assert_eq!(state.transcript(), "[thinking] step one + step two\nfinal");
     }
 }
