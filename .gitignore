@@ -1,3 +1,6 @@
 /target
 .vscode/
 .env
+.sessions/
+.claude/
+.DS_Store

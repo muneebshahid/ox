@@ -2,12 +2,12 @@ use super::events::{
     FunctionCallItem, ResponseCompletedPayload, ResponseFailedPayload, StreamEvent,
     parse_function_call_item,
 };
+use crate::events::agent_bridge::AgentEventBridge;
 use crate::tools;
-use anyhow::Result;
-use std::io::{self, Write};
 
 pub(super) struct EventHandler<'a> {
     history: &'a mut Vec<serde_json::Value>,
+    bridge: Option<&'a AgentEventBridge>,
     has_tool_calls: bool,
     committed_any: bool,
     saw_completed: bool,
@@ -15,9 +15,13 @@ pub(super) struct EventHandler<'a> {
 }
 
 impl<'a> EventHandler<'a> {
-    pub(super) const fn new(history: &'a mut Vec<serde_json::Value>) -> Self {
+    pub(super) const fn new(
+        history: &'a mut Vec<serde_json::Value>,
+        bridge: Option<&'a AgentEventBridge>,
+    ) -> Self {
         Self {
             history,
+            bridge,
             has_tool_calls: false,
             committed_any: false,
             saw_completed: false,
@@ -25,10 +29,12 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    pub(super) fn handle_event(&mut self, event: StreamEvent) -> Result<()> {
+    pub(super) fn handle_event(&mut self, event: StreamEvent) {
         match event {
-            StreamEvent::OutputItemAdded { item } => Self::handle_output_item_added(&item),
-            StreamEvent::TextDelta { delta } => Self::handle_text_delta(&delta)?,
+            StreamEvent::Ignored | StreamEvent::ReasoningSummaryPartAdded => {}
+            StreamEvent::TextDelta { delta } => self.handle_text_delta(&delta),
+            StreamEvent::ReasoningSummaryTextDelta { delta } => self.handle_reasoning_delta(&delta),
+            StreamEvent::ReasoningSummaryPartDone => self.handle_reasoning_part_done(),
             StreamEvent::OutputItemDone { item } => self.handle_output_item_done(&item),
             StreamEvent::ResponseCompleted { response }
             | StreamEvent::ResponseDone { response } => {
@@ -38,10 +44,7 @@ impl<'a> EventHandler<'a> {
                 self.handle_response_failed(response.as_ref());
             }
             StreamEvent::Error { code, message } => self.handle_error(code, message),
-            StreamEvent::Ignored => {}
         }
-
-        Ok(())
     }
 
     pub(super) const fn has_tool_calls(&self) -> bool {
@@ -60,21 +63,22 @@ impl<'a> EventHandler<'a> {
         self.failure_message.as_deref()
     }
 
-    fn handle_output_item_added(item: &serde_json::Value) {
-        if let Some(call) = parse_function_call_item(item) {
-            let name = if call.name.is_empty() {
-                "unknown"
-            } else {
-                &call.name
-            };
-            println!("Calling {name}...");
+    fn handle_text_delta(&self, delta: &str) {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_text_delta(delta);
         }
     }
 
-    fn handle_text_delta(delta: &str) -> Result<()> {
-        print!("{delta}");
-        io::stdout().flush()?;
-        Ok(())
+    fn handle_reasoning_delta(&self, delta: &str) {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_reasoning_delta(delta);
+        }
+    }
+
+    fn handle_reasoning_part_done(&self) {
+        if let Some(bridge) = self.bridge {
+            bridge.emit_reasoning_delta("\n\n");
+        }
     }
 
     fn handle_output_item_done(&mut self, item: &serde_json::Value) {
@@ -104,7 +108,16 @@ impl<'a> EventHandler<'a> {
             other => other.to_string(),
         };
 
+        if let Some(bridge) = self.bridge {
+            bridge.emit_tool_call_start(&call_id, &name, &args);
+        }
+
         let result = tools::execute(&name, &args);
+
+        if let Some(bridge) = self.bridge {
+            bridge.emit_tool_call_end(&call_id, &name);
+        }
+
         self.history.push(item.clone());
         self.history.push(serde_json::json!({
             "type": "function_call_output",
@@ -160,16 +173,18 @@ impl<'a> EventHandler<'a> {
 mod tests {
     use super::EventHandler;
     use crate::agent::events::StreamEvent;
+    use crate::events::agent_bridge::AgentEventBridge;
+    use crate::events::hub::EventHub;
+    use crate::events::types::CoreEvent;
 
     #[test]
     fn stores_function_call_and_output_in_history() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_item.done",
                         "item": {
                             "type": "function_call",
@@ -179,10 +194,9 @@ mod tests {
                             "arguments": "{}"
                         }
                     }"#,
-                )
-                .expect("parse function call event"),
             )
-            .expect("handle function call event");
+            .expect("parse function call event"),
+        );
 
         assert!(handler.has_tool_calls());
         assert!(handler.committed_any());
@@ -210,12 +224,11 @@ mod tests {
     #[test]
     fn stores_reasoning_item_in_history() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_item.done",
                         "item": {
                             "type": "reasoning",
@@ -227,10 +240,9 @@ mod tests {
                             "extra_field": "keep-me"
                         }
                     }"#,
-                )
-                .expect("parse reasoning event"),
             )
-            .expect("handle reasoning event");
+            .expect("parse reasoning event"),
+        );
 
         assert!(handler.committed_any());
         assert_eq!(history.len(), 1);
@@ -251,19 +263,17 @@ mod tests {
     #[test]
     fn marks_completed_on_response_completed_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.completed",
                         "response": { "status": "completed" }
                     }"#,
-                )
-                .expect("parse response.completed event"),
             )
-            .expect("handle response.completed event");
+            .expect("parse response.completed event"),
+        );
 
         assert!(handler.saw_completed());
         assert!(handler.failure_message().is_none());
@@ -272,22 +282,20 @@ mod tests {
     #[test]
     fn marks_failure_on_response_failed_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.failed",
                         "response": {
                             "status": "failed",
                             "error": { "code": "rate_limit_exceeded", "message": "try again later" }
                         }
                     }"#,
-                )
-                .expect("parse response.failed event"),
             )
-            .expect("handle response.failed event");
+            .expect("parse response.failed event"),
+        );
 
         assert_eq!(handler.failure_message(), Some("try again later"));
     }
@@ -295,20 +303,18 @@ mod tests {
     #[test]
     fn marks_failure_on_error_event() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "error",
                         "code": "server_error",
                         "message": "internal error"
                     }"#,
-                )
-                .expect("parse error event"),
             )
-            .expect("handle error event");
+            .expect("parse error event"),
+        );
 
         assert_eq!(
             handler.failure_message(),
@@ -319,21 +325,84 @@ mod tests {
     #[test]
     fn does_not_mark_committed_on_delta_only_events() {
         let mut history = Vec::new();
-        let mut handler = EventHandler::new(&mut history);
+        let mut handler = EventHandler::new(&mut history, None);
 
-        handler
-            .handle_event(
-                serde_json::from_str::<StreamEvent>(
-                    r#"{
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
                         "type": "response.output_text.delta",
                         "delta": "hello"
                     }"#,
-                )
-                .expect("parse response.output_text.delta event"),
             )
-            .expect("handle response.output_text.delta event");
+            .expect("parse response.output_text.delta event"),
+        );
 
         assert!(!handler.committed_any());
         assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn emits_tool_start_and_end_events() {
+        let mut history = Vec::new();
+        let hub = EventHub::new(8);
+        let mut sub = hub.subscribe();
+        let bridge = AgentEventBridge::new(hub);
+        let mut handler = EventHandler::new(&mut history, Some(&bridge));
+
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "function_call",
+                            "id": "fc_test",
+                            "call_id": "call_test",
+                            "name": "ls",
+                            "arguments": "{\"path\":\".\"}"
+                        }
+                    }"#,
+            )
+            .expect("parse function call event"),
+        );
+
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentToolCallStart {
+                call_id: "call_test".to_string(),
+                tool_name: "ls".to_string(),
+                args: "{\"path\":\".\"}".to_string(),
+            })
+        );
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentToolCallEnd {
+                call_id: "call_test".to_string(),
+                tool_name: "ls".to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_reasoning_delta_event() {
+        let mut history = Vec::new();
+        let hub = EventHub::new(8);
+        let mut sub = hub.subscribe();
+        let bridge = AgentEventBridge::new(hub);
+        let mut handler = EventHandler::new(&mut history, Some(&bridge));
+
+        handler.handle_event(
+            serde_json::from_str::<StreamEvent>(
+                r#"{
+                        "type": "response.reasoning_summary_text.delta",
+                        "delta": "Analyzing..."
+                    }"#,
+            )
+            .expect("parse reasoning summary delta event"),
+        );
+
+        assert_eq!(
+            sub.recv().await,
+            Ok(CoreEvent::AgentReasoningDelta("Analyzing...".to_string()))
+        );
     }
 }

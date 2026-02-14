@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose an enhancement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve?
+      placeholder: The current behavior makes it hard to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior and API surface.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you evaluate?
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Module/ownership impact
+      description: Note affected modules and ownership boundaries.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links, examples, or prior art.
