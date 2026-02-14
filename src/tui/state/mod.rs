@@ -72,7 +72,7 @@ impl InputBuffer {
         }
 
         let mut start = self.cursor;
-        start = rewind_while(&self.text, start, |ch| ch.is_whitespace());
+        start = rewind_while(&self.text, start, char::is_whitespace);
         start = rewind_while(&self.text, start, |ch| !ch.is_whitespace());
 
         if start == self.cursor {
@@ -89,8 +89,7 @@ fn rewind_while(text: &str, mut cursor: usize, predicate: impl Fn(char) -> bool)
         let prev_char_start = text[..cursor]
             .char_indices()
             .last()
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
+            .map_or(0, |(idx, _)| idx);
         let ch = text[prev_char_start..cursor].chars().next().unwrap_or('\0');
         if !predicate(ch) {
             break;
@@ -123,8 +122,13 @@ pub struct TuiState {
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
     reasoning_trace_open: bool,
-    interpret_backslash_enter_as_newline: bool,
-    pending_backslash_enter_newline: bool,
+    backslash_enter_newline: BackslashEnterNewline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackslashEnterNewline {
+    Disabled,
+    Enabled { pending: bool },
 }
 
 impl TuiState {
@@ -138,8 +142,11 @@ impl TuiState {
             running_started_at: None,
             run_phase: RunPhase::Thinking,
             reasoning_trace_open: false,
-            interpret_backslash_enter_as_newline: is_vscode_terminal(),
-            pending_backslash_enter_newline: false,
+            backslash_enter_newline: if is_vscode_terminal() {
+                BackslashEnterNewline::Enabled { pending: false }
+            } else {
+                BackslashEnterNewline::Disabled
+            },
         }
     }
 
@@ -243,38 +250,40 @@ impl TuiState {
         match action {
             UiAction::Insert(c) => {
                 self.input.insert_char(c);
-                self.pending_backslash_enter_newline =
-                    self.interpret_backslash_enter_as_newline && c == '\\';
+                if let BackslashEnterNewline::Enabled { pending } = &mut self.backslash_enter_newline
+                {
+                    *pending = c == '\\';
+                }
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Backspace => {
                 self.input.backspace();
-                self.pending_backslash_enter_newline = false;
+                self.clear_pending_backslash_enter_newline();
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::DeleteBackwardWord => {
                 self.input.delete_backward_word();
-                self.pending_backslash_enter_newline = false;
+                self.clear_pending_backslash_enter_newline();
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::ClearBeforeCursor => {
                 self.input.clear_before_cursor();
-                self.pending_backslash_enter_newline = false;
+                self.clear_pending_backslash_enter_newline();
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::ClearAfterCursor => {
                 self.input.clear_after_cursor();
-                self.pending_backslash_enter_newline = false;
+                self.clear_pending_backslash_enter_newline();
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Paste(pasted) => {
                 self.input.insert_str(&pasted);
-                self.pending_backslash_enter_newline = false;
+                self.clear_pending_backslash_enter_newline();
                 self.mark_dirty();
                 StateCommand::None
             }
@@ -302,10 +311,14 @@ impl TuiState {
     }
 
     fn try_apply_backslash_enter_newline(&mut self) -> bool {
-        if !self.interpret_backslash_enter_as_newline || !self.pending_backslash_enter_newline {
+        let pending = match self.backslash_enter_newline {
+            BackslashEnterNewline::Disabled => false,
+            BackslashEnterNewline::Enabled { pending } => pending,
+        };
+        if !pending {
             return false;
         }
-        self.pending_backslash_enter_newline = false;
+        self.clear_pending_backslash_enter_newline();
 
         if self.input.cursor() != self.input.as_str().len() {
             return false;
@@ -323,7 +336,7 @@ impl TuiState {
     fn submit_input(&mut self) -> StateCommand {
         let submitted = self.input.as_str().trim().to_string();
         self.input.clear();
-        self.pending_backslash_enter_newline = false;
+        self.clear_pending_backslash_enter_newline();
         self.mark_dirty();
 
         if submitted.is_empty() {
@@ -338,6 +351,12 @@ impl TuiState {
         self.set_running_status();
         self.mark_dirty();
         StateCommand::Submit(submitted)
+    }
+
+    const fn clear_pending_backslash_enter_newline(&mut self) {
+        if let BackslashEnterNewline::Enabled { pending } = &mut self.backslash_enter_newline {
+            *pending = false;
+        }
     }
 
     const fn scroll_up(&mut self, lines: u16) {
@@ -493,7 +512,7 @@ mod tests {
     #[test]
     fn backslash_then_enter_inserts_newline_in_vscode_terminals() {
         let mut state = TuiState::new();
-        state.interpret_backslash_enter_as_newline = true;
+        state.backslash_enter_newline = super::BackslashEnterNewline::Enabled { pending: false };
 
         state.handle_ui_action(UiAction::Insert('\\'));
         let command = state.handle_ui_action(UiAction::Submit);
