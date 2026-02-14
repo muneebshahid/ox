@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::Result;
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -58,13 +59,13 @@ impl TerminalGuard {
     pub(super) fn new() -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
         Ok(Self { terminal })
     }
 
-    pub(super) fn draw(&mut self, state: &TuiState, meta: &RenderMeta) -> Result<()> {
+    pub(super) fn draw(&mut self, state: &mut TuiState, meta: &RenderMeta) -> Result<()> {
         self.terminal
             .draw(|frame| render::draw(frame, state, meta))?;
         Ok(())
@@ -74,7 +75,11 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
         let _ = self.terminal.show_cursor();
     }
 }

@@ -15,8 +15,34 @@ pub(super) struct OutputView {
     pub(super) plain_lines: Vec<String>,
 }
 
+/// Builds the full output payload for this frame.
+///
+/// Inputs:
+/// - `state`: UI state containing transcript text.
+/// - `meta`: session metadata used by the banner.
+///
+/// Behavior:
+/// - Starts with banner rows.
+/// - Appends a blank separator and transcript lines when transcript is non-empty.
+/// - Produces styled and plain representations of the same content.
+///
+/// Example:
+/// - If transcript is empty, output contains only banner rows.
+/// - If transcript is `"hello\nworld"`, output plain lines are:
+///   - banner rows
+///   - `""` (separator)
+///   - `"hello"`
+///   - `"world"`
+/// - `OutputView.text` contains the same logical rows as styled `Line` values
+///   for rendering, while `OutputView.plain_lines` stores the unstyled strings
+///   used by wrap/scroll math.
+///
+/// Output:
+/// - `OutputView` with:
+///   - `text`: styled lines for rendering.
+///   - `plain_lines`: unstyled lines for wrap/scroll computations.
 pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputView {
-    let (mut lines, mut plain_lines) = welcome_lines(meta);
+    let (mut lines, mut plain_lines) = build_banner_lines(meta);
 
     if !state.transcript().is_empty() {
         lines.push(Line::from(String::new()));
@@ -33,15 +59,55 @@ pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputVi
     }
 }
 
-pub(super) fn draw_output(frame: &mut Frame<'_>, output: &OutputView, area: Rect) {
-    let scroll = viewport::scroll_offset(&output.plain_lines, area.width, area.height);
+/// Renders the output pane with scroll state applied.
+///
+/// Inputs:
+/// - `frame`: frame to render into.
+/// - `state`: mutable state containing manual scroll position.
+/// - `output`: prebuilt styled/plain output content.
+/// - `area`: output pane rectangle from layout.
+///
+/// Behavior:
+/// - Computes current maximum scroll from wrapped content and viewport size.
+/// - Clamps state scroll to that max to avoid overscroll debt.
+/// - Converts "lines from bottom" into ratatui scroll offset.
+/// - Draws wrapped paragraph content into `area`.
+///
+/// Output:
+/// - No return value; writes widgets into `frame`.
+pub(super) fn draw_output(
+    frame: &mut Frame<'_>,
+    state: &mut TuiState,
+    output: &OutputView,
+    area: Rect,
+) {
+    let max_scroll = viewport::max_scroll_offset(&output.plain_lines, area.width, area.height);
+    state.clamp_output_scroll_lines_from_bottom(max_scroll);
+    let scroll = viewport::scroll_offset(
+        &output.plain_lines,
+        area.width,
+        area.height,
+        state.output_scroll_lines_from_bottom(),
+    );
     let output = Paragraph::new(output.text.clone())
         .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(output, area);
 }
 
-fn welcome_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
+/// Builds the fixed banner lines shown at the top of the output area.
+///
+/// Inputs:
+/// - `meta`: model/auth/cwd/branch information for this session.
+///
+/// Behavior:
+/// - Composes an ASCII logo column with color styling.
+/// - Aligns metadata rows to the right of the logo.
+/// - Produces both styled lines and plain text lines with identical layout.
+///
+/// Output:
+/// - Tuple of `(styled_lines, plain_lines)` used by `build_output_view`.
+fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
     let logo_rows = [
         "██████╗ ██╗  ██╗",
         "██╔═══██╗╚██╗██╔╝",

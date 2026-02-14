@@ -5,6 +5,17 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+/// Draws the input pane (prompt + typed text) at the bottom of the screen.
+///
+/// Inputs:
+/// - `frame`: frame to render into.
+/// - `state`: UI state containing current typed input.
+/// - `area`: rectangle allocated to the input widget.
+///
+/// Behavior:
+/// - Prefixes input with `> ` prompt.
+/// - Renders top and bottom borders.
+/// - Enables wrapping without trimming trailing spaces.
 pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     let prompt = format!("> {}", state.input());
     let input = Paragraph::new(prompt)
@@ -13,6 +24,17 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     frame.render_widget(input, area);
 }
 
+/// Places the terminal cursor at the visual end of the current input text.
+///
+/// Inputs:
+/// - `frame`: frame whose cursor position will be updated.
+/// - `state`: UI state containing current typed input.
+/// - `input_area`: layout area for the full input widget (including borders).
+///
+/// Behavior:
+/// - Converts outer widget area into inner writable area by removing borders.
+/// - Computes wrapped cursor `(col, row)` offset for `> {input}`.
+/// - Sets frame cursor position if inner area is non-empty.
 pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
     let input_inner = input_area.inner(Margin {
         vertical: 1,
@@ -26,11 +48,35 @@ pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_
     }
 }
 
+/// Computes cursor offset while accounting for the `> ` prompt prefix.
+///
+/// Inputs:
+/// - `input`: raw user-typed input text.
+/// - `width`: inner input area width in cells.
+/// - `height`: inner input area height in rows.
+///
+/// Output:
+/// - `(col, row)` cursor position relative to the input inner area.
 fn cursor_offset_with_prompt(input: &str, width: u16, height: u16) -> (u16, u16) {
     let display = format!("> {input}");
     cursor_offset(&display, width, height)
 }
 
+/// Computes wrapped cursor position for arbitrary text in a bounded rectangle.
+///
+/// Inputs:
+/// - `input`: text to measure.
+/// - `width`: available width in cells.
+/// - `height`: available height in rows.
+///
+/// Behavior:
+/// - Advances by one column per character.
+/// - Wraps to next row when column reaches `width`.
+/// - Handles explicit newline characters by resetting column and advancing row.
+/// - Clamps to bottom-right cell when text exceeds visible input area.
+///
+/// Output:
+/// - `(col, row)` position relative to the top-left of the measured area.
 fn cursor_offset(input: &str, width: u16, height: u16) -> (u16, u16) {
     if width == 0 || height == 0 {
         return (0, 0);

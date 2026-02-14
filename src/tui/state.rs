@@ -2,20 +2,11 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
+use super::action::UiAction;
 use crate::events::types::CoreEvent;
 
 const STATUS_IDLE: &str = "Idle";
 const STATUS_RUNNING: &str = "Running";
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum UserInput {
-    Insert(char),
-    Backspace,
-    Submit,
-    Paste(String),
-    Quit,
-    Ignore,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StateCommand {
@@ -35,6 +26,7 @@ pub struct TuiState {
     transcript: String,
     status: String,
     input: String,
+    output_scroll_lines_from_bottom: u16,
     dirty: bool,
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
@@ -47,6 +39,7 @@ impl TuiState {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
             input: String::new(),
+            output_scroll_lines_from_bottom: 0,
             dirty: true,
             running_started_at: None,
             run_phase: RunPhase::Thinking,
@@ -64,6 +57,15 @@ impl TuiState {
 
     pub fn input(&self) -> &str {
         &self.input
+    }
+
+    pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
+        self.output_scroll_lines_from_bottom
+    }
+
+    pub(super) fn clamp_output_scroll_lines_from_bottom(&mut self, max_scroll_lines: u16) {
+        self.output_scroll_lines_from_bottom =
+            self.output_scroll_lines_from_bottom.min(max_scroll_lines);
     }
 
     pub fn status_is_running(&self) -> bool {
@@ -137,26 +139,38 @@ impl TuiState {
         self.mark_dirty();
     }
 
-    pub fn handle_user_input(&mut self, input: UserInput) -> StateCommand {
-        match input {
-            UserInput::Insert(c) => {
+    pub fn handle_ui_action(&mut self, action: UiAction) -> StateCommand {
+        match action {
+            UiAction::Insert(c) => {
                 self.input.push(c);
                 self.mark_dirty();
                 StateCommand::None
             }
-            UserInput::Backspace => {
+            UiAction::Backspace => {
                 self.input.pop();
                 self.mark_dirty();
                 StateCommand::None
             }
-            UserInput::Paste(pasted) => {
+            UiAction::Paste(pasted) => {
                 self.input.push_str(&pasted);
                 self.mark_dirty();
                 StateCommand::None
             }
-            UserInput::Submit => self.submit_input(),
-            UserInput::Quit => StateCommand::Quit,
-            UserInput::Ignore => StateCommand::None,
+            UiAction::ScrollUp { lines } => {
+                self.scroll_up(lines);
+                StateCommand::None
+            }
+            UiAction::ScrollDown { lines } => {
+                self.scroll_down(lines);
+                StateCommand::None
+            }
+            UiAction::ViewportChanged => {
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::Submit => self.submit_input(),
+            UiAction::Quit => StateCommand::Quit,
+            UiAction::Ignore => StateCommand::None,
         }
     }
 
@@ -172,10 +186,29 @@ impl TuiState {
             return StateCommand::Quit;
         }
 
-        self.push_user_input(&submitted);
+        self.output_scroll_lines_from_bottom = 0;
+        self.push_user_message(&submitted);
         self.set_running_status();
         self.mark_dirty();
         StateCommand::Submit(submitted)
+    }
+
+    fn scroll_up(&mut self, lines: u16) {
+        if lines == 0 {
+            return;
+        }
+        self.output_scroll_lines_from_bottom =
+            self.output_scroll_lines_from_bottom.saturating_add(lines);
+        self.mark_dirty();
+    }
+
+    fn scroll_down(&mut self, lines: u16) {
+        if lines == 0 {
+            return;
+        }
+        self.output_scroll_lines_from_bottom =
+            self.output_scroll_lines_from_bottom.saturating_sub(lines);
+        self.mark_dirty();
     }
 
     fn set_running_status(&mut self) {
@@ -214,7 +247,7 @@ impl TuiState {
         }
     }
 
-    fn push_user_input(&mut self, input: &str) {
+    fn push_user_message(&mut self, input: &str) {
         self.ensure_message_gap();
         self.push_transcript_line(&format!("> {input}"));
     }
@@ -339,8 +372,9 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StateCommand, TuiState, UserInput};
+    use super::{StateCommand, TuiState};
     use crate::events::types::CoreEvent;
+    use crate::tui::action::UiAction;
 
     #[test]
     fn appends_deltas_and_updates_status() {
@@ -358,10 +392,10 @@ mod tests {
     #[test]
     fn submit_creates_command_and_echoes_transcript() {
         let mut state = TuiState::new();
-        state.handle_user_input(UserInput::Insert('h'));
-        state.handle_user_input(UserInput::Insert('i'));
+        state.handle_ui_action(UiAction::Insert('h'));
+        state.handle_ui_action(UiAction::Insert('i'));
 
-        let command = state.handle_user_input(UserInput::Submit);
+        let command = state.handle_ui_action(UiAction::Submit);
         assert_eq!(command, StateCommand::Submit("hi".to_string()));
         assert_eq!(state.transcript(), "> hi\n");
         assert_eq!(state.status(), "Running");
@@ -371,12 +405,12 @@ mod tests {
     #[test]
     fn submit_exit_returns_quit() {
         let mut state = TuiState::new();
-        state.handle_user_input(UserInput::Insert('e'));
-        state.handle_user_input(UserInput::Insert('x'));
-        state.handle_user_input(UserInput::Insert('i'));
-        state.handle_user_input(UserInput::Insert('t'));
+        state.handle_ui_action(UiAction::Insert('e'));
+        state.handle_ui_action(UiAction::Insert('x'));
+        state.handle_ui_action(UiAction::Insert('i'));
+        state.handle_ui_action(UiAction::Insert('t'));
 
-        let command = state.handle_user_input(UserInput::Submit);
+        let command = state.handle_ui_action(UiAction::Submit);
         assert_eq!(command, StateCommand::Quit);
     }
 
@@ -436,9 +470,9 @@ mod tests {
     #[test]
     fn inserts_blank_line_between_user_and_assistant_messages() {
         let mut state = TuiState::new();
-        state.handle_user_input(UserInput::Insert('h'));
-        state.handle_user_input(UserInput::Insert('i'));
-        let _ = state.handle_user_input(UserInput::Submit);
+        state.handle_ui_action(UiAction::Insert('h'));
+        state.handle_ui_action(UiAction::Insert('i'));
+        let _ = state.handle_ui_action(UiAction::Submit);
 
         state.handle_agent_event(CoreEvent::AgentTurnStart);
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
@@ -453,9 +487,58 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTurnStart);
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
         state.handle_agent_event(CoreEvent::AgentTurnEnd);
-        state.handle_user_input(UserInput::Paste("next".to_string()));
-        let _ = state.handle_user_input(UserInput::Submit);
+        state.handle_ui_action(UiAction::Paste("next".to_string()));
+        let _ = state.handle_ui_action(UiAction::Submit);
 
         assert_eq!(state.transcript(), "hello\n\n> next\n");
+    }
+
+    #[test]
+    fn scroll_input_moves_output_offset_and_clamps_at_zero_on_down() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+
+        state.handle_ui_action(UiAction::ScrollUp { lines: 5 });
+        assert_eq!(state.output_scroll_lines_from_bottom(), 5);
+        assert!(state.take_dirty());
+
+        state.handle_ui_action(UiAction::ScrollDown { lines: 2 });
+        assert_eq!(state.output_scroll_lines_from_bottom(), 3);
+
+        state.handle_ui_action(UiAction::ScrollDown { lines: 10 });
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn submit_resets_manual_scroll_back_to_follow_output() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::ScrollUp { lines: 4 });
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+
+        let command = state.handle_ui_action(UiAction::Submit);
+
+        assert_eq!(command, StateCommand::Submit("hello".to_string()));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn viewport_change_marks_state_dirty() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+
+        state.handle_ui_action(UiAction::ViewportChanged);
+
+        assert!(state.take_dirty());
+    }
+
+    #[test]
+    fn clamps_scroll_offset_to_current_max_when_content_cannot_scroll_further() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::ScrollUp { lines: 100 });
+        assert_eq!(state.output_scroll_lines_from_bottom(), 100);
+
+        state.clamp_output_scroll_lines_from_bottom(5);
+
+        assert_eq!(state.output_scroll_lines_from_bottom(), 5);
     }
 }

@@ -14,7 +14,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-const INPUT_HEIGHT: u16 = 3;
+const INPUT_HEIGHT_ROWS: u16 = 3;
 const RUNNING_BADGE_TOGGLE_INTERVAL: Duration = Duration::from_millis(250);
 const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
@@ -29,6 +29,17 @@ pub struct RenderMeta {
 }
 
 impl RenderMeta {
+    /// Builds the static metadata shown in the output banner.
+    ///
+    /// Inputs:
+    /// - `model`: active model identifier.
+    /// - `reasoning`: reasoning effort label.
+    /// - `auth_mode`: auth mode label (for example `subscription` or `api`).
+    /// - `cwd`: current working directory text shown in the banner.
+    /// - `git_branch`: optional git branch label.
+    ///
+    /// Output:
+    /// - A `RenderMeta` value consumed by output rendering.
     pub const fn new(
         model: String,
         reasoning: String,
@@ -46,22 +57,36 @@ impl RenderMeta {
     }
 }
 
-pub fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) {
+/// Draws one full TUI frame.
+///
+/// Inputs:
+/// - `frame`: current ratatui frame to render into.
+/// - `state`: mutable UI state; draw may clamp scroll values based on viewport.
+/// - `meta`: static banner metadata for this session.
+///
+/// Behavior:
+/// - Builds output content.
+/// - Computes the vertical layout split (output, status, input).
+/// - Draws output text, optional running status line, input box, and cursor.
+///
+/// Output:
+/// - No return value; writes widgets into `frame`.
+pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     let area = frame.area();
     let output = build_output_view(state, meta);
     let show_status = status_visible(state);
-    let status_height = u16::from(show_status);
-    let output_height = output_height(&output.plain_lines, area, show_status);
+    let status_height_rows = u16::from(show_status);
+    let output_height_rows = output_height_rows(&output.plain_lines, area, show_status);
 
     let [output_area, status_area, input_area, _rest] = Layout::vertical([
-        Constraint::Length(output_height),
-        Constraint::Length(status_height),
-        Constraint::Length(INPUT_HEIGHT),
+        Constraint::Length(output_height_rows),
+        Constraint::Length(status_height_rows),
+        Constraint::Length(INPUT_HEIGHT_ROWS),
         Constraint::Min(0),
     ])
     .areas(area);
 
-    draw_output(frame, &output, output_area);
+    draw_output(frame, state, &output, output_area);
     if show_status {
         draw_status(frame, state, status_area);
     }
@@ -69,13 +94,42 @@ pub fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) {
     input::place_input_cursor(frame, state, input_area);
 }
 
-fn output_height(lines: &[String], area: Rect, show_status: bool) -> u16 {
+/// Computes how many rows to allocate to the output pane.
+///
+/// Inputs:
+/// - `lines`: plain output lines used for wrap/height math.
+/// - `area`: full frame area for this draw.
+/// - `show_status`: whether the status row will be rendered.
+///
+/// Behavior:
+/// - Reserves fixed space for input and optional status.
+/// - Uses viewport wrap math to cap output height to available rows.
+///
+/// Example:
+/// - If `area.height = 20`, input height is `3`, and `show_status = true`,
+///   reserved height is `4`, so max output height is `16`.
+/// - If wrapped output lines require `30` rows, returned output height is `16`.
+/// - If wrapped output lines require `8` rows, returned output height is `8`.
+///
+/// Output:
+/// - Output area height in terminal rows.
+fn output_height_rows(lines: &[String], area: Rect, show_status: bool) -> u16 {
     let status_height = u16::from(show_status);
-    let reserved_height = INPUT_HEIGHT.saturating_add(status_height);
+    let reserved_height = INPUT_HEIGHT_ROWS.saturating_add(status_height);
     let max_output_height = area.height.saturating_sub(reserved_height).max(1);
     viewport::clamped_output_height(lines, area.width, max_output_height)
 }
 
+/// Draws the status row.
+///
+/// Inputs:
+/// - `frame`: frame to render into.
+/// - `state`: UI state containing status and running phase/time.
+/// - `area`: layout region for the status row.
+///
+/// Behavior:
+/// - Shows animated running badge line while running.
+/// - Otherwise shows idle/error status text.
 fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     let status = if state.status_is_running() {
         Paragraph::new(running_status_line(
@@ -88,10 +142,28 @@ fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     frame.render_widget(status, area);
 }
 
+/// Returns whether the status row should be visible.
+///
+/// Input:
+/// - `state`: current UI state.
+///
+/// Output:
+/// - `true` when status is not `Idle`, otherwise `false`.
 fn status_visible(state: &TuiState) -> bool {
     state.status() != "Idle"
 }
 
+/// Builds the animated running status line: `[OX] <phase> (<seconds>s)`.
+///
+/// Inputs:
+/// - `elapsed`: time since run start.
+/// - `phase`: textual phase label such as `Thinking` or `Responding`.
+///
+/// Behavior:
+/// - Alternates bold emphasis between `O` and `X` at a fixed interval.
+///
+/// Output:
+/// - Styled `Line` for the status row.
 fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
     let interval_ms = RUNNING_BADGE_TOGGLE_INTERVAL.as_millis().max(1);
     let highlight_o = (elapsed.as_millis() / interval_ms).is_multiple_of(2);

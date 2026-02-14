@@ -11,17 +11,19 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::event::{Event as CEvent, EventStream};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
-    input,
+    action::UiAction,
+    action_adapter,
     render::RenderMeta,
     state::{StateCommand, TuiState},
     terminal::UiRenderer,
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
+const MAX_DRAINED_INPUT_EVENTS_PER_LOOP: usize = 64;
 
 struct UiRuntime {
     renderer: UiRenderer,
@@ -96,7 +98,9 @@ async fn run_main_loop(
         let mut should_exit = false;
         tokio::select! {
             maybe_event = ui.input_events.next() => {
-                if handle_main_input_event(app, session_state, ui, maybe_event).await? {
+                let should_exit_from_input =
+                    process_input_burst(app, session_state, ui, maybe_event).await?;
+                if should_exit_from_input {
                     should_exit = true;
                 }
             }
@@ -122,6 +126,19 @@ async fn run_main_loop(
     Ok(())
 }
 
+async fn process_input_burst(
+    app: &AppContext,
+    session_state: &mut SessionManager,
+    ui: &mut UiRuntime,
+    maybe_event: Option<Result<CEvent, std::io::Error>>,
+) -> Result<bool> {
+    if handle_main_input_event(app, session_state, ui, maybe_event).await? {
+        return Ok(true);
+    }
+
+    drain_pending_main_input_events(app, session_state, ui).await
+}
+
 async fn handle_main_input_event(
     app: &AppContext,
     session_state: &mut SessionManager,
@@ -133,7 +150,9 @@ async fn handle_main_input_event(
     };
 
     let command = match event_result {
-        Ok(event) => ui.state.handle_user_input(input::to_user_input(event)),
+        Ok(event) => ui
+            .state
+            .handle_ui_action(action_adapter::to_ui_action(event)),
         Err(err) => {
             ui.state
                 .handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
@@ -146,6 +165,24 @@ async fn handle_main_input_event(
         StateCommand::Quit => Ok(true),
         StateCommand::Submit(input) => run_active_turn(app, session_state, &input, ui).await,
     }
+}
+
+async fn drain_pending_main_input_events(
+    app: &AppContext,
+    session_state: &mut SessionManager,
+    ui: &mut UiRuntime,
+) -> Result<bool> {
+    for _ in 0..MAX_DRAINED_INPUT_EVENTS_PER_LOOP {
+        let Some(ready_event) = ui.input_events.next().now_or_never() else {
+            break;
+        };
+        let should_exit = handle_main_input_event(app, session_state, ui, ready_event).await?;
+        if should_exit {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn handle_core_event(state: &mut TuiState, event: Result<CoreEvent, RecvError>) -> bool {
@@ -189,7 +226,9 @@ async fn run_active_turn(
                     should_exit = true;
                     continue;
                 };
-                if should_quit_during_active_turn(&mut ui.state, event_result) {
+                let should_exit_from_input =
+                    process_active_turn_input_burst(ui, event_result);
+                if should_exit_from_input {
                     should_exit = true;
                 }
             }
@@ -219,15 +258,55 @@ async fn run_active_turn(
     }
 }
 
-fn should_quit_during_active_turn(
+fn handle_input_during_active_turn(
     state: &mut TuiState,
     event_result: Result<CEvent, std::io::Error>,
 ) -> bool {
     match event_result {
-        Ok(event) => input::is_quit_event(&event),
+        Ok(event) => {
+            if action_adapter::is_quit_event(&event) {
+                return true;
+            }
+
+            let ui_action = action_adapter::to_ui_action(event);
+            if matches!(
+                &ui_action,
+                UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
+            ) {
+                let _ = state.handle_ui_action(ui_action);
+            }
+            false
+        }
         Err(err) => {
             state.handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
             false
         }
     }
+}
+
+fn process_active_turn_input_burst(
+    ui: &mut UiRuntime,
+    event_result: Result<CEvent, std::io::Error>,
+) -> bool {
+    if handle_input_during_active_turn(&mut ui.state, event_result) {
+        return true;
+    }
+
+    drain_pending_active_turn_input_events(ui)
+}
+
+fn drain_pending_active_turn_input_events(ui: &mut UiRuntime) -> bool {
+    for _ in 0..MAX_DRAINED_INPUT_EVENTS_PER_LOOP {
+        let Some(ready_event) = ui.input_events.next().now_or_never() else {
+            break;
+        };
+        let Some(event_result) = ready_event else {
+            return true;
+        };
+        if handle_input_during_active_turn(&mut ui.state, event_result) {
+            return true;
+        }
+    }
+
+    false
 }
