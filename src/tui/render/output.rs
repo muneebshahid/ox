@@ -9,6 +9,8 @@ use ratatui::{
 };
 
 const LOGO_COL_WIDTH: usize = 18;
+const BANNER_LEFT_PADDING: usize = 2;
+const BANNER_TOP_PADDING_ROWS: usize = 1;
 
 pub(super) struct OutputView {
     pub(super) text: Text<'static>,
@@ -136,12 +138,17 @@ fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
     }
 
     let row_count = logo_rows.len().max(meta_rows.len());
-    let mut lines = Vec::with_capacity(row_count);
-    let mut plain_lines = Vec::with_capacity(row_count);
+    let mut lines = Vec::with_capacity(row_count + BANNER_TOP_PADDING_ROWS);
+    let mut plain_lines = Vec::with_capacity(row_count + BANNER_TOP_PADDING_ROWS);
     let label_style = Style::default()
         .fg(Color::DarkGray)
         .add_modifier(Modifier::BOLD);
     let value_style = Style::default().fg(Color::Gray);
+
+    for _ in 0..BANNER_TOP_PADDING_ROWS {
+        lines.push(Line::from(String::new()));
+        plain_lines.push(String::new());
+    }
 
     for row_idx in 0..row_count {
         let logo_text = logo_rows.get(row_idx).copied().unwrap_or("");
@@ -150,7 +157,12 @@ fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
         let meta_row = meta_rows.get(row_idx).copied();
         let meta_text =
             meta_row.map_or_else(String::new, |(label, value)| format!("{label:<6}: {value}"));
-        let plain_line = format!("{logo_text}{}{}", " ".repeat(padding), meta_text);
+        let plain_line = format!(
+            "{}{logo_text}{}{}",
+            " ".repeat(BANNER_LEFT_PADDING),
+            " ".repeat(padding),
+            meta_text
+        );
         plain_lines.push(plain_line);
 
         let logo_style = logo_colors
@@ -159,6 +171,7 @@ fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
                 Style::default().fg(*color).add_modifier(Modifier::BOLD)
             });
         let mut spans = vec![
+            Span::raw(" ".repeat(BANNER_LEFT_PADDING)),
             Span::styled(logo_text.to_string(), logo_style),
             Span::raw(" ".repeat(padding)),
         ];
@@ -175,11 +188,12 @@ fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::build_output_view;
+    use super::{BANNER_TOP_PADDING_ROWS, build_output_view, draw_output, viewport};
     use crate::{
         events::types::CoreEvent,
-        tui::{render::RenderMeta, state::TuiState},
+        tui::{action::UiAction, render::RenderMeta, state::TuiState},
     };
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
     fn test_meta_with_branch(branch: Option<&str>) -> RenderMeta {
         RenderMeta::new(
@@ -196,11 +210,11 @@ mod tests {
         let state = TuiState::new();
         let view = build_output_view(&state, &test_meta_with_branch(None));
 
-        assert_eq!(view.plain_lines.len(), 6);
-        assert!(view.plain_lines[0].contains("model"));
-        assert!(view.plain_lines[1].contains("reasoning"));
-        assert!(view.plain_lines[2].contains("auth"));
-        assert!(view.plain_lines[3].contains("cwd"));
+        assert_eq!(view.plain_lines.len(), 6 + BANNER_TOP_PADDING_ROWS);
+        assert!(view.plain_lines[BANNER_TOP_PADDING_ROWS].contains("model"));
+        assert!(view.plain_lines[1 + BANNER_TOP_PADDING_ROWS].contains("reasoning"));
+        assert!(view.plain_lines[2 + BANNER_TOP_PADDING_ROWS].contains("auth"));
+        assert!(view.plain_lines[3 + BANNER_TOP_PADDING_ROWS].contains("cwd"));
     }
 
     #[test]
@@ -221,9 +235,35 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello\nworld".to_string()));
 
         let view = build_output_view(&state, &test_meta_with_branch(None));
-        let separator_index = 6;
+        let separator_index = 6 + BANNER_TOP_PADDING_ROWS;
         assert_eq!(view.plain_lines[separator_index], "");
         assert_eq!(view.plain_lines[separator_index + 1], "hello");
         assert_eq!(view.plain_lines[separator_index + 2], "world");
+    }
+
+    #[test]
+    fn draw_output_clamps_manual_scroll_to_current_max() {
+        let mut state = TuiState::new();
+        state.handle_agent_event(CoreEvent::AgentTextDelta(
+            (0..40)
+                .map(|i| format!("line-{i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+        let _ = state.handle_ui_action(UiAction::ScrollUp { lines: 500 });
+        assert!(state.output_scroll_lines_from_bottom() > 0);
+
+        let output = build_output_view(&state, &test_meta_with_branch(None));
+        let expected_max = viewport::max_scroll_offset(&output.plain_lines, 20, 5);
+
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        terminal
+            .draw(|frame| {
+                draw_output(frame, &mut state, &output, Rect::new(0, 0, 20, 5));
+            })
+            .expect("draw output");
+
+        assert_eq!(state.output_scroll_lines_from_bottom(), expected_max);
     }
 }

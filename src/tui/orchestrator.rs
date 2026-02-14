@@ -310,3 +310,102 @@ fn drain_pending_active_turn_input_events(ui: &mut UiRuntime) -> bool {
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{handle_core_event, handle_input_during_active_turn};
+    use crate::{
+        events::{hub::RecvError, types::CoreEvent},
+        tui::{action::UiAction, action_adapter, state::TuiState},
+    };
+    use crossterm::event::{
+        Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
+    };
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn core_event_closed_requests_exit() {
+        let mut state = TuiState::new();
+        let should_exit = handle_core_event(&mut state, Err(RecvError::Closed));
+        assert!(should_exit);
+    }
+
+    #[test]
+    fn core_event_lagged_records_error_and_keeps_running() {
+        let mut state = TuiState::new();
+        let should_exit = handle_core_event(&mut state, Err(RecvError::Lagged(7)));
+
+        assert!(!should_exit);
+        assert_eq!(state.status(), "Lagged: dropped 7 events");
+    }
+
+    #[test]
+    fn core_event_ok_is_applied_to_state() {
+        let mut state = TuiState::new();
+        let should_exit = handle_core_event(
+            &mut state,
+            Ok(CoreEvent::AgentTextDelta("hello".to_string())),
+        );
+
+        assert!(!should_exit);
+        assert_eq!(state.transcript(), "hello");
+    }
+
+    #[test]
+    fn active_turn_quit_key_exits_immediately() {
+        let mut state = TuiState::new();
+        let should_exit = handle_input_during_active_turn(
+            &mut state,
+            Ok(CEvent::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+        );
+
+        assert!(should_exit);
+    }
+
+    #[test]
+    fn active_turn_only_allows_scroll_or_viewport_actions() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::Up))));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 1);
+        assert!(state.take_dirty());
+
+        let _ = handle_input_during_active_turn(
+            &mut state,
+            Ok(CEvent::Key(KeyEvent {
+                code: KeyCode::Char('x'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+        );
+        assert_eq!(state.input(), "");
+        assert_eq!(
+            action_adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
+            UiAction::Insert('x')
+        );
+    }
+
+    #[test]
+    fn active_turn_input_errors_are_reported_to_state() {
+        let mut state = TuiState::new();
+        let io_err = std::io::Error::other("boom");
+
+        let should_exit = handle_input_during_active_turn(&mut state, Err(io_err));
+        assert!(!should_exit);
+        assert_eq!(state.status(), "Input error: boom");
+    }
+}

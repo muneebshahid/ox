@@ -190,7 +190,11 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line};
+    use super::{
+        OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, output_height_rows, running_status_line, status_visible,
+    };
+    use crate::{events::types::CoreEvent, tui::state::TuiState};
+    use ratatui::layout::Rect;
     use std::time::Duration;
 
     #[test]
@@ -211,5 +215,29 @@ mod tests {
 
         assert_eq!(line.spans[1].style.fg, Some(OX_BADGE_O_COLOR));
         assert_eq!(line.spans[2].style.fg, Some(OX_BADGE_X_COLOR));
+    }
+
+    #[test]
+    fn output_height_rows_respects_reserved_rows_for_input_and_status() {
+        let lines = vec!["one".to_string(); 100];
+        let area = Rect::new(0, 0, 20, 10);
+
+        let with_status = output_height_rows(&lines, area, true);
+        let without_status = output_height_rows(&lines, area, false);
+
+        assert_eq!(with_status, 6);
+        assert_eq!(without_status, 7);
+    }
+
+    #[test]
+    fn status_visibility_tracks_non_idle_state() {
+        let mut state = TuiState::new();
+        assert!(!status_visible(&state));
+
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        assert!(status_visible(&state));
+
+        state.handle_agent_event(CoreEvent::Error("boom".to_string()));
+        assert!(status_visible(&state));
     }
 }

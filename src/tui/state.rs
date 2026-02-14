@@ -193,7 +193,7 @@ impl TuiState {
         StateCommand::Submit(submitted)
     }
 
-    fn scroll_up(&mut self, lines: u16) {
+    const fn scroll_up(&mut self, lines: u16) {
         if lines == 0 {
             return;
         }
@@ -202,7 +202,7 @@ impl TuiState {
         self.mark_dirty();
     }
 
-    fn scroll_down(&mut self, lines: u16) {
+    const fn scroll_down(&mut self, lines: u16) {
         if lines == 0 {
             return;
         }
@@ -372,7 +372,7 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StateCommand, TuiState};
+    use super::{StateCommand, TuiState, format_tool_start_message, truncate_preview};
     use crate::events::types::CoreEvent;
     use crate::tui::action::UiAction;
 
@@ -540,5 +540,56 @@ mod tests {
         state.clamp_output_scroll_lines_from_bottom(5);
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
+    }
+
+    #[test]
+    fn formats_known_tools_with_read_file_range_variants() {
+        let with_offset_only =
+            format_tool_start_message("read_file", r#"{"path":"src/main.rs","offset":42}"#);
+        assert_eq!(with_offset_only, "[tool] reading src/main.rs:42-");
+
+        let with_limit_only =
+            format_tool_start_message("read_file", r#"{"path":"src/main.rs","limit":3}"#);
+        assert_eq!(with_limit_only, "[tool] reading src/main.rs (limit 3)");
+    }
+
+    #[test]
+    fn formats_bash_commands_with_newlines_as_single_line() {
+        let formatted =
+            format_tool_start_message("bash", r#"{"command":"echo hello\necho world"}"#);
+        assert_eq!(formatted, "[tool] bash: echo hello echo world");
+    }
+
+    #[test]
+    fn falls_back_when_tool_args_are_not_json() {
+        let formatted = format_tool_start_message("mystery_tool", "raw-args");
+        assert_eq!(formatted, "[tool] running mystery_tool raw-args");
+    }
+
+    #[test]
+    fn falls_back_to_tool_name_only_when_args_are_empty() {
+        let formatted = format_tool_start_message("mystery_tool", "");
+        assert_eq!(formatted, "[tool] running mystery_tool");
+    }
+
+    #[test]
+    fn truncate_preview_appends_ellipsis_when_exceeding_limit() {
+        assert_eq!(truncate_preview("hello", 5), "hello");
+        assert_eq!(truncate_preview("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn running_phase_label_truncates_long_tool_names() {
+        let mut state = TuiState::new();
+        state.handle_agent_event(CoreEvent::AgentTurnStart);
+        state.handle_agent_event(CoreEvent::AgentToolCallStart {
+            call_id: "call_1".to_string(),
+            tool_name: "a_very_long_tool_name_that_should_be_truncated".to_string(),
+            args: "{}".to_string(),
+        });
+
+        let label = state.running_phase_label();
+        assert!(label.starts_with("Running "));
+        assert!(label.ends_with("..."));
     }
 }

@@ -91,6 +91,15 @@ mod tests {
         }
     }
 
+    fn key_with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
     #[test]
     fn maps_resize_event_to_viewport_changed() {
         assert_eq!(
@@ -164,5 +173,53 @@ mod tests {
             row: 1,
             modifiers: KeyModifiers::NONE,
         })));
+    }
+
+    #[test]
+    fn maps_submit_backspace_and_paste() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Enter))),
+            UiAction::Submit
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Backspace))),
+            UiAction::Backspace
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Paste("hello".to_string())),
+            UiAction::Paste("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_modified_char_input() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::Ignore
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('a'),
+                KeyModifiers::ALT
+            ))),
+            UiAction::Ignore
+        );
+    }
+
+    #[test]
+    fn ignores_non_scroll_mouse_and_non_quit_keys_for_quit_check() {
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })),
+            UiAction::Ignore
+        );
+        assert!(!is_quit_event(&CEvent::Key(key(KeyCode::Char('q')))));
     }
 }
