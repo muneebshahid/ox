@@ -6,10 +6,8 @@ use std::{
 use anyhow::Result;
 use crossterm::{
     Command,
+    event::{DisableBracketedPaste, EnableBracketedPaste},
     execute,
-    event::{
-        DisableBracketedPaste, EnableBracketedPaste,
-    },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};

@@ -37,7 +37,9 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     match key.code {
         KeyCode::Enter if key.modifiers == KeyModifiers::NONE => UiAction::Submit,
         KeyCode::Enter => UiAction::Insert('\n'),
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => UiAction::DeleteBackwardWord,
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => {
+            UiAction::DeleteBackwardWord
+        }
         KeyCode::Backspace => UiAction::Backspace,
         KeyCode::Up => UiAction::ScrollUp {
             lines: KEY_SCROLL_LINES,
