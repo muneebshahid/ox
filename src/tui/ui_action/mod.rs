@@ -1,3 +1,5 @@
+pub(super) mod adapter;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum UiAction {
     Insert(char),

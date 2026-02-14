@@ -2,13 +2,13 @@ use crossterm::event::{
     Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
-use super::action::UiAction;
+use super::UiAction;
 
 const KEY_SCROLL_LINES: u16 = 1;
 const PAGE_SCROLL_LINES: u16 = 8;
 const MOUSE_SCROLL_LINES: u16 = 3;
 
-pub(super) fn to_ui_action(event: CEvent) -> UiAction {
+pub(in crate::tui) fn to_ui_action(event: CEvent) -> UiAction {
     match event {
         CEvent::Key(key) => to_ui_action_from_key(key),
         CEvent::Paste(pasted) => UiAction::Paste(pasted),
@@ -18,7 +18,7 @@ pub(super) fn to_ui_action(event: CEvent) -> UiAction {
     }
 }
 
-pub(super) const fn is_quit_event(event: &CEvent) -> bool {
+pub(in crate::tui) const fn is_quit_event(event: &CEvent) -> bool {
     matches!(event, CEvent::Key(key) if is_quit_key(key))
 }
 
@@ -76,7 +76,7 @@ const fn is_quit_key(key: &KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{is_quit_event, to_ui_action};
-    use crate::tui::action::UiAction;
+    use crate::tui::ui_action::UiAction;
     use crossterm::event::{
         Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
         MouseEvent, MouseEventKind,

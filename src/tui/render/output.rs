@@ -191,7 +191,7 @@ mod tests {
     use super::{BANNER_TOP_PADDING_ROWS, build_output_view, draw_output, viewport};
     use crate::{
         events::types::CoreEvent,
-        tui::{action::UiAction, render::RenderMeta, state::TuiState},
+        tui::{render::RenderMeta, state::TuiState, ui_action::UiAction},
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 

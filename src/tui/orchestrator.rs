@@ -15,11 +15,10 @@ use futures::{FutureExt, StreamExt};
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
-    action::UiAction,
-    action_adapter,
     render::RenderMeta,
     state::{StateCommand, TuiState},
     terminal::UiRenderer,
+    ui_action::{self, UiAction},
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
@@ -152,7 +151,7 @@ async fn handle_main_input_event(
     let command = match event_result {
         Ok(event) => ui
             .state
-            .handle_ui_action(action_adapter::to_ui_action(event)),
+            .handle_ui_action(ui_action::adapter::to_ui_action(event)),
         Err(err) => {
             ui.state
                 .handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
@@ -264,11 +263,11 @@ fn handle_input_during_active_turn(
 ) -> bool {
     match event_result {
         Ok(event) => {
-            if action_adapter::is_quit_event(&event) {
+            if ui_action::adapter::is_quit_event(&event) {
                 return true;
             }
 
-            let ui_action = action_adapter::to_ui_action(event);
+            let ui_action = ui_action::adapter::to_ui_action(event);
             if matches!(
                 &ui_action,
                 UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
@@ -316,7 +315,10 @@ mod tests {
     use super::{handle_core_event, handle_input_during_active_turn};
     use crate::{
         events::{hub::RecvError, types::CoreEvent},
-        tui::{action::UiAction, action_adapter, state::TuiState},
+        tui::{
+            state::TuiState,
+            ui_action::{self, UiAction},
+        },
     };
     use crossterm::event::{
         Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
@@ -394,7 +396,7 @@ mod tests {
         );
         assert_eq!(state.input(), "");
         assert_eq!(
-            action_adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
+            ui_action::adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
             UiAction::Insert('x')
         );
     }
