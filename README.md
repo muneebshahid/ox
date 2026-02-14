@@ -13,7 +13,7 @@ A minimal CLI coding agent in Rust. It connects to OpenAI's Responses API with s
 
 Early-stage and evolving quickly. The core loop and TUI are usable, but APIs and internals may change between releases.
 
-## Prerequisites
+## Prerequisites (from source)
 
 - Rust `1.87+` (edition 2024)
 - `cargo`
@@ -23,7 +23,13 @@ Early-stage and evolving quickly. The core loop and TUI are usable, but APIs and
 
 If `rg` or `fd` are missing, `ox` falls back to `grep` and `find`.
 
-## Quickstart
+## Install (Homebrew)
+
+```bash
+brew install muneebshahid/tap/ox
+```
+
+## Quickstart (from source)
 
 ```bash
 git clone https://github.com/muneebshahid/ox.git
