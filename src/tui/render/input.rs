@@ -61,7 +61,7 @@ pub(super) fn clamped_height_rows(input: &str, width: u16, max_height: u16) -> u
     required.max(min_height).min(max_height)
 }
 
-/// Places the terminal cursor at the visual end of the current input text.
+/// Places the terminal cursor at the current input cursor position.
 ///
 /// Inputs:
 /// - `frame`: frame whose cursor position will be updated.
@@ -80,9 +80,13 @@ pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_
     });
 
     if input_inner.width > 0 && input_inner.height > 0 {
-        let display = input_with_prompt(state.input());
+        let input = state.input();
+        let cursor = state.input_cursor().min(input.len());
+        let display = input_with_prompt(input);
+        let display_prefix = input_with_prompt(&input[..cursor]);
+
         let scroll = input_scroll_offset(&display, input_inner.width, input_inner.height);
-        let (col, absolute_row) = cursor_offset(&display, input_inner.width, u16::MAX);
+        let (col, absolute_row) = cursor_offset(&display_prefix, input_inner.width, u16::MAX);
         let row = absolute_row
             .saturating_sub(scroll)
             .min(input_inner.height.saturating_sub(1));

@@ -1,5 +1,5 @@
 use crossterm::event::{
-    Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+    Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
 use super::UiAction;
@@ -7,6 +7,9 @@ use super::UiAction;
 const KEY_SCROLL_LINES: u16 = 1;
 const PAGE_SCROLL_LINES: u16 = 8;
 const MOUSE_SCROLL_LINES: u16 = 3;
+
+const CTRL_K_FALLBACK: char = '\u{000b}';
+const CTRL_U_FALLBACK: char = '\u{0015}';
 
 pub(in crate::tui) fn to_ui_action(event: CEvent) -> UiAction {
     match event {
@@ -23,12 +26,18 @@ pub(in crate::tui) const fn is_quit_event(event: &CEvent) -> bool {
 }
 
 fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return UiAction::Ignore;
+    }
+
     if is_quit_key(&key) {
         return UiAction::Quit;
     }
 
     match key.code {
-        KeyCode::Enter => UiAction::Submit,
+        KeyCode::Enter if key.modifiers == KeyModifiers::NONE => UiAction::Submit,
+        KeyCode::Enter => UiAction::Insert('\n'),
+        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::ALT) => UiAction::DeleteBackwardWord,
         KeyCode::Backspace => UiAction::Backspace,
         KeyCode::Up => UiAction::ScrollUp {
             lines: KEY_SCROLL_LINES,
@@ -42,6 +51,18 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         KeyCode::PageDown => UiAction::ScrollDown {
             lines: PAGE_SCROLL_LINES,
         },
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            UiAction::ClearBeforeCursor
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            UiAction::ClearAfterCursor
+        }
+        KeyCode::Char(CTRL_U_FALLBACK) if key.modifiers == KeyModifiers::NONE => {
+            UiAction::ClearBeforeCursor
+        }
+        KeyCode::Char(CTRL_K_FALLBACK) if key.modifiers == KeyModifiers::NONE => {
+            UiAction::ClearAfterCursor
+        }
         KeyCode::Char(c)
             if !key
                 .modifiers
@@ -96,6 +117,15 @@ mod tests {
             code,
             modifiers,
             kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn key_with_kind(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers,
+            kind,
             state: KeyEventState::NONE,
         }
     }
@@ -188,6 +218,81 @@ mod tests {
         assert_eq!(
             to_ui_action(CEvent::Paste("hello".to_string())),
             UiAction::Paste("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn maps_shift_enter_to_insert_newline() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Enter,
+                KeyModifiers::SHIFT
+            ))),
+            UiAction::Insert('\n')
+        );
+    }
+
+    #[test]
+    fn maps_alt_enter_to_insert_newline() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Enter,
+                KeyModifiers::ALT
+            ))),
+            UiAction::Insert('\n')
+        );
+    }
+
+    #[test]
+    fn maps_alt_backspace_to_delete_backward_word() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Backspace,
+                KeyModifiers::ALT
+            ))),
+            UiAction::DeleteBackwardWord
+        );
+    }
+
+    #[test]
+    fn maps_ctrl_u_and_ctrl_k_to_clear_actions() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::ClearBeforeCursor
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::ClearAfterCursor
+        );
+    }
+
+    #[test]
+    fn maps_ctrl_u_and_ctrl_k_fallback_control_chars() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Char('\u{0015}')))),
+            UiAction::ClearBeforeCursor
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Char('\u{000b}')))),
+            UiAction::ClearAfterCursor
+        );
+    }
+
+    #[test]
+    fn ignores_key_release_events() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_kind(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+                KeyEventKind::Release
+            ))),
+            UiAction::Ignore
         );
     }
 

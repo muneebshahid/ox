@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::{fs::OpenOptions, io::Write, path::PathBuf};
 
 use crate::{
     agent,
@@ -24,12 +25,51 @@ use super::{
 const REDRAW_INTERVAL_MS: u64 = 33;
 const MAX_DRAINED_INPUT_EVENTS_PER_LOOP: usize = 64;
 
+struct InputEventLogger {
+    file: std::fs::File,
+}
+
+impl InputEventLogger {
+    fn from_env() -> Option<Self> {
+        let value = std::env::var("OX_DEBUG_KEYS").ok()?;
+        if value == "0" {
+            return None;
+        }
+
+        let path = if value.is_empty() || value == "1" {
+            std::env::temp_dir().join("ox-tui-keys.log")
+        } else {
+            PathBuf::from(value)
+        };
+
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(Self { file })
+    }
+
+    fn log_event(&mut self, event: &Result<CEvent, std::io::Error>) {
+        match event {
+            Ok(ev) => {
+                let _ = writeln!(self.file, "{ev:?}");
+            }
+            Err(err) => {
+                let _ = writeln!(self.file, "[input error] {err}");
+            }
+        }
+        let _ = self.file.flush();
+    }
+}
+
 struct UiRuntime {
     renderer: UiRenderer,
     state: TuiState,
     subscription: Subscription,
     input_events: EventStream,
     ticker: time::Interval,
+    input_logger: Option<InputEventLogger>,
 }
 
 impl UiRuntime {
@@ -49,6 +89,7 @@ impl UiRuntime {
             subscription: app.agent_bridge.subscribe(),
             input_events: EventStream::new(),
             ticker: create_ticker(),
+            input_logger: InputEventLogger::from_env(),
         })
     }
 }
@@ -147,6 +188,10 @@ async fn handle_main_input_event(
     let Some(event_result) = maybe_event else {
         return Ok(true);
     };
+
+    if let Some(logger) = &mut ui.input_logger {
+        logger.log_event(&event_result);
+    }
 
     let command = match event_result {
         Ok(event) => ui

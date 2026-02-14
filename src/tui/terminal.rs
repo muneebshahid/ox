@@ -7,6 +7,9 @@ use anyhow::Result;
 use crossterm::{
     Command,
     execute,
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste,
+    },
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -118,6 +121,7 @@ impl TerminalGuard {
     pub(super) fn new() -> Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
+        execute!(stdout, EnableBracketedPaste)?;
         execute!(stdout, EnterAlternateScreen)?;
         let _ = execute!(stdout, EnableAlternateScroll);
         let backend = CrosstermBackend::new(stdout);
@@ -134,12 +138,10 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
+        let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste);
         let _ = execute!(self.terminal.backend_mut(), DisableAlternateScroll);
-        let _ = execute!(
-            self.terminal.backend_mut(),
-            LeaveAlternateScreen
-        );
+        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = disable_raw_mode();
         let _ = self.terminal.show_cursor();
     }
 }

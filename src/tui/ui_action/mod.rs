@@ -4,6 +4,9 @@ pub(super) mod adapter;
 pub enum UiAction {
     Insert(char),
     Backspace,
+    DeleteBackwardWord,
+    ClearBeforeCursor,
+    ClearAfterCursor,
     Submit,
     Paste(String),
     ScrollUp { lines: u16 },

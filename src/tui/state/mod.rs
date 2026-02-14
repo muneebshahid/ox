@@ -9,6 +9,97 @@ mod tool_activity;
 const STATUS_IDLE: &str = "Idle";
 const STATUS_RUNNING: &str = "Running";
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct InputBuffer {
+    text: String,
+    cursor: usize, // byte offset within `text`
+}
+
+impl InputBuffer {
+    fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    const fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        self.text.insert(self.cursor, ch);
+        self.cursor = self.cursor.saturating_add(ch.len_utf8());
+    }
+
+    fn insert_str(&mut self, value: &str) {
+        self.text.insert_str(self.cursor, value);
+        self.cursor = self.cursor.saturating_add(value.len());
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+
+        let Some((start, _)) = self.text[..self.cursor].char_indices().last() else {
+            return;
+        };
+        self.text.drain(start..self.cursor);
+        self.cursor = start;
+    }
+
+    fn clear_before_cursor(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.text.drain(..self.cursor);
+        self.cursor = 0;
+    }
+
+    fn clear_after_cursor(&mut self) {
+        if self.cursor >= self.text.len() {
+            return;
+        }
+        self.text.drain(self.cursor..);
+    }
+
+    fn delete_backward_word(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+
+        let mut start = self.cursor;
+        start = rewind_while(&self.text, start, |ch| ch.is_whitespace());
+        start = rewind_while(&self.text, start, |ch| !ch.is_whitespace());
+
+        if start == self.cursor {
+            return;
+        }
+
+        self.text.drain(start..self.cursor);
+        self.cursor = start;
+    }
+}
+
+fn rewind_while(text: &str, mut cursor: usize, predicate: impl Fn(char) -> bool) -> usize {
+    while cursor > 0 {
+        let prev_char_start = text[..cursor]
+            .char_indices()
+            .last()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        let ch = text[prev_char_start..cursor].chars().next().unwrap_or('\0');
+        if !predicate(ch) {
+            break;
+        }
+        cursor = prev_char_start;
+    }
+    cursor
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum StateCommand {
     None,
@@ -26,12 +117,14 @@ enum RunPhase {
 pub struct TuiState {
     transcript: String,
     status: String,
-    input: String,
+    input: InputBuffer,
     output_scroll_lines_from_bottom: u16,
     dirty: bool,
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
     reasoning_trace_open: bool,
+    interpret_backslash_enter_as_newline: bool,
+    pending_backslash_enter_newline: bool,
 }
 
 impl TuiState {
@@ -39,12 +132,14 @@ impl TuiState {
         Self {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
-            input: String::new(),
+            input: InputBuffer::default(),
             output_scroll_lines_from_bottom: 0,
             dirty: true,
             running_started_at: None,
             run_phase: RunPhase::Thinking,
             reasoning_trace_open: false,
+            interpret_backslash_enter_as_newline: is_vscode_terminal(),
+            pending_backslash_enter_newline: false,
         }
     }
 
@@ -57,7 +152,11 @@ impl TuiState {
     }
 
     pub fn input(&self) -> &str {
-        &self.input
+        self.input.as_str()
+    }
+
+    pub(in crate::tui) const fn input_cursor(&self) -> usize {
+        self.input.cursor()
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
@@ -143,17 +242,39 @@ impl TuiState {
     pub fn handle_ui_action(&mut self, action: UiAction) -> StateCommand {
         match action {
             UiAction::Insert(c) => {
-                self.input.push(c);
+                self.input.insert_char(c);
+                self.pending_backslash_enter_newline =
+                    self.interpret_backslash_enter_as_newline && c == '\\';
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Backspace => {
-                self.input.pop();
+                self.input.backspace();
+                self.pending_backslash_enter_newline = false;
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::DeleteBackwardWord => {
+                self.input.delete_backward_word();
+                self.pending_backslash_enter_newline = false;
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::ClearBeforeCursor => {
+                self.input.clear_before_cursor();
+                self.pending_backslash_enter_newline = false;
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::ClearAfterCursor => {
+                self.input.clear_after_cursor();
+                self.pending_backslash_enter_newline = false;
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Paste(pasted) => {
-                self.input.push_str(&pasted);
+                self.input.insert_str(&pasted);
+                self.pending_backslash_enter_newline = false;
                 self.mark_dirty();
                 StateCommand::None
             }
@@ -169,15 +290,40 @@ impl TuiState {
                 self.mark_dirty();
                 StateCommand::None
             }
-            UiAction::Submit => self.submit_input(),
+            UiAction::Submit => {
+                if self.try_apply_backslash_enter_newline() {
+                    return StateCommand::None;
+                }
+                self.submit_input()
+            }
             UiAction::Quit => StateCommand::Quit,
             UiAction::Ignore => StateCommand::None,
         }
     }
 
+    fn try_apply_backslash_enter_newline(&mut self) -> bool {
+        if !self.interpret_backslash_enter_as_newline || !self.pending_backslash_enter_newline {
+            return false;
+        }
+        self.pending_backslash_enter_newline = false;
+
+        if self.input.cursor() != self.input.as_str().len() {
+            return false;
+        }
+        if !self.input.as_str().ends_with('\\') {
+            return false;
+        }
+
+        self.input.backspace();
+        self.input.insert_char('\n');
+        self.mark_dirty();
+        true
+    }
+
     fn submit_input(&mut self) -> StateCommand {
-        let submitted = self.input.trim().to_string();
+        let submitted = self.input.as_str().trim().to_string();
         self.input.clear();
+        self.pending_backslash_enter_newline = false;
         self.mark_dirty();
 
         if submitted.is_empty() {
@@ -285,6 +431,11 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+fn is_vscode_terminal() -> bool {
+    std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("vscode"))
+        || std::env::var("VSCODE_PID").is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{StateCommand, TuiState, truncate_preview};
@@ -315,6 +466,40 @@ mod tests {
         assert_eq!(state.transcript(), "> hi\n");
         assert_eq!(state.status(), "Running");
         assert_eq!(state.input(), "");
+    }
+
+    #[test]
+    fn ctrl_u_clears_before_cursor_and_ctrl_k_clears_after_cursor() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello world".to_string()));
+
+        let _ = state.handle_ui_action(UiAction::ClearAfterCursor);
+        assert_eq!(state.input(), "hello world");
+
+        let _ = state.handle_ui_action(UiAction::ClearBeforeCursor);
+        assert_eq!(state.input(), "");
+    }
+
+    #[test]
+    fn alt_backspace_deletes_one_word() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello world".to_string()));
+        state.handle_ui_action(UiAction::DeleteBackwardWord);
+        assert_eq!(state.input(), "hello ");
+        state.handle_ui_action(UiAction::DeleteBackwardWord);
+        assert_eq!(state.input(), "");
+    }
+
+    #[test]
+    fn backslash_then_enter_inserts_newline_in_vscode_terminals() {
+        let mut state = TuiState::new();
+        state.interpret_backslash_enter_as_newline = true;
+
+        state.handle_ui_action(UiAction::Insert('\\'));
+        let command = state.handle_ui_action(UiAction::Submit);
+
+        assert_eq!(command, StateCommand::None);
+        assert_eq!(state.input(), "\n");
     }
 
     #[test]
