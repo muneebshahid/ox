@@ -268,11 +268,23 @@ fn handle_input_during_active_turn(
             }
 
             let ui_action = ui_action::adapter::to_ui_action(event);
-            if matches!(
-                &ui_action,
-                UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
-            ) {
-                let _ = state.handle_ui_action(ui_action);
+            let allowed_action = match ui_action {
+                UiAction::ScrollUp { lines } => Some(UiAction::ScrollUp { lines }),
+                UiAction::ScrollDown { lines } => Some(UiAction::ScrollDown { lines }),
+                UiAction::OutputSelectStart { col, row } => {
+                    Some(UiAction::OutputSelectStart { col, row })
+                }
+                UiAction::OutputSelectDrag { col, row } => {
+                    Some(UiAction::OutputSelectDrag { col, row })
+                }
+                UiAction::OutputSelectEnd { col, row } => {
+                    Some(UiAction::OutputSelectEnd { col, row })
+                }
+                UiAction::ViewportChanged => Some(UiAction::ViewportChanged),
+                _ => None,
+            };
+            if let Some(action) = allowed_action {
+                let _ = state.handle_ui_action(action);
             }
             false
         }
@@ -321,7 +333,8 @@ mod tests {
         },
     };
     use crossterm::event::{
-        Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
+        Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
+        MouseEvent, MouseEventKind,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -378,10 +391,12 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_only_allows_scroll_or_viewport_actions() {
+    fn active_turn_only_allows_scroll_selection_or_viewport_actions() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
         let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 8);
+        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::Up))));
         assert_eq!(state.output_scroll_lines_from_bottom(), 8);
         assert!(state.take_dirty());
 
@@ -399,6 +414,45 @@ mod tests {
             ui_action::adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
             UiAction::Insert('x')
         );
+    }
+
+    #[test]
+    fn active_turn_allows_output_selection_actions() {
+        let mut state = TuiState::new();
+        state.set_output_viewport(crate::tui::state::OutputViewport {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 2,
+        });
+        state.set_output_cells(vec![
+            "abcd".chars().map(|ch| ch.to_string()).collect(),
+            "efgh".chars().map(|ch| ch.to_string()).collect(),
+        ]);
+
+        let down = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        let drag = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let up = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(!handle_input_during_active_turn(&mut state, Ok(down)));
+        assert!(!handle_input_during_active_turn(&mut state, Ok(drag)));
+        assert!(!handle_input_during_active_turn(&mut state, Ok(up)));
+        assert_eq!(state.take_pending_copy_text(), Some("bcd\nefg".to_string()));
     }
 
     #[test]

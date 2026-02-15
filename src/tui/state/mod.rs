@@ -25,12 +25,37 @@ enum RunPhase {
     Tool { name: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct OutputViewport {
+    pub(in crate::tui) x: u16,
+    pub(in crate::tui) y: u16,
+    pub(in crate::tui) width: u16,
+    pub(in crate::tui) height: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct CellPos {
+    pub(in crate::tui) col: u16,
+    pub(in crate::tui) row: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OutputSelection {
+    anchor: CellPos,
+    focus: CellPos,
+    selecting: bool,
+    pending_copy: bool,
+}
+
 pub struct TuiState {
     transcript: String,
     status: String,
     input: InputState,
     input_inner_width: u16,
     output_scroll_lines_from_bottom: u16,
+    output_viewport: Option<OutputViewport>,
+    output_cells: Vec<Vec<String>>,
+    output_selection: Option<OutputSelection>,
     dirty: bool,
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
@@ -45,6 +70,9 @@ impl TuiState {
             input: InputState::new(),
             input_inner_width: 0,
             output_scroll_lines_from_bottom: 0,
+            output_viewport: None,
+            output_cells: Vec::new(),
+            output_selection: None,
             dirty: true,
             running_started_at: None,
             run_phase: RunPhase::Thinking,
@@ -70,6 +98,47 @@ impl TuiState {
 
     pub(in crate::tui) const fn set_input_inner_width(&mut self, width: u16) {
         self.input_inner_width = width;
+    }
+
+    pub(in crate::tui) const fn set_output_viewport(&mut self, viewport: OutputViewport) {
+        self.output_viewport = Some(viewport);
+    }
+
+    pub(in crate::tui) fn set_output_cells(&mut self, cells: Vec<Vec<String>>) {
+        self.output_cells = cells;
+    }
+
+    pub(in crate::tui) fn output_selection_range(&self) -> Option<(CellPos, CellPos)> {
+        let selection = self.output_selection?;
+        let first = selection.anchor;
+        let second = selection.focus;
+        if (second.row, second.col) < (first.row, first.col) {
+            Some((second, first))
+        } else {
+            Some((first, second))
+        }
+    }
+
+    pub(in crate::tui) fn take_pending_copy_text(&mut self) -> Option<String> {
+        let selection = self.output_selection?;
+        if !selection.pending_copy {
+            return None;
+        }
+        if selection.anchor == selection.focus {
+            self.output_selection = Some(OutputSelection {
+                pending_copy: false,
+                ..selection
+            });
+            return None;
+        }
+
+        let (start, end) = self.output_selection_range()?;
+        let text = build_selected_text(&self.output_cells, start, end)?;
+        self.output_selection = Some(OutputSelection {
+            pending_copy: false,
+            ..selection
+        });
+        Some(text)
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
@@ -167,14 +236,8 @@ impl TuiState {
             UiAction::DeleteToLineEnd => self.finish_input_mutation(InputState::delete_to_line_end),
             UiAction::MoveCursorLeft => self.finish_input_mutation(InputState::move_left),
             UiAction::MoveCursorRight => self.finish_input_mutation(InputState::move_right),
-            UiAction::MoveCursorUp => {
-                let width = self.input_inner_width;
-                self.finish_input_mutation(|input| input.move_up(width))
-            }
-            UiAction::MoveCursorDown => {
-                let width = self.input_inner_width;
-                self.finish_input_mutation(|input| input.move_down(width))
-            }
+            UiAction::MoveCursorUp => self.move_cursor_up(),
+            UiAction::MoveCursorDown => self.move_cursor_down(),
             UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputState::move_word_left),
             UiAction::MoveCursorWordRight => {
                 self.finish_input_mutation(InputState::move_word_right)
@@ -194,6 +257,18 @@ impl TuiState {
             }
             UiAction::ScrollDown { lines } => {
                 self.scroll_down(lines);
+                StateCommand::None
+            }
+            UiAction::OutputSelectStart { col, row } => {
+                self.begin_output_selection(col, row);
+                StateCommand::None
+            }
+            UiAction::OutputSelectDrag { col, row } => {
+                self.update_output_selection(col, row);
+                StateCommand::None
+            }
+            UiAction::OutputSelectEnd { col, row } => {
+                self.end_output_selection(col, row);
                 StateCommand::None
             }
             UiAction::ViewportChanged => {
@@ -240,6 +315,20 @@ impl TuiState {
         StateCommand::Submit(submitted)
     }
 
+    fn move_cursor_up(&mut self) -> StateCommand {
+        if self.input.move_up(self.input_inner_width) {
+            self.mark_dirty();
+        }
+        StateCommand::None
+    }
+
+    fn move_cursor_down(&mut self) -> StateCommand {
+        if self.input.move_down(self.input_inner_width) {
+            self.mark_dirty();
+        }
+        StateCommand::None
+    }
+
     const fn scroll_up(&mut self, lines: u16) {
         if lines == 0 {
             return;
@@ -255,6 +344,59 @@ impl TuiState {
         }
         self.output_scroll_lines_from_bottom =
             self.output_scroll_lines_from_bottom.saturating_sub(lines);
+        self.mark_dirty();
+    }
+
+    const fn begin_output_selection(&mut self, col: u16, row: u16) {
+        let Some(viewport) = self.output_viewport else {
+            return;
+        };
+        let Some(relative) = relative_cell_in_viewport(viewport, col, row) else {
+            if self.output_selection.is_some() {
+                self.output_selection = None;
+                self.mark_dirty();
+            }
+            return;
+        };
+
+        self.output_selection = Some(OutputSelection {
+            anchor: relative,
+            focus: relative,
+            selecting: true,
+            pending_copy: false,
+        });
+        self.mark_dirty();
+    }
+
+    const fn update_output_selection(&mut self, col: u16, row: u16) {
+        let Some(viewport) = self.output_viewport else {
+            return;
+        };
+        let Some(selection) = self.output_selection else {
+            return;
+        };
+        if !selection.selecting {
+            return;
+        }
+
+        let focus = clamp_to_viewport(viewport, col, row);
+        self.output_selection = Some(OutputSelection { focus, ..selection });
+        self.mark_dirty();
+    }
+
+    fn end_output_selection(&mut self, col: u16, row: u16) {
+        self.update_output_selection(col, row);
+        let Some(selection) = self.output_selection else {
+            return;
+        };
+        if !selection.selecting {
+            return;
+        }
+        self.output_selection = Some(OutputSelection {
+            selecting: false,
+            pending_copy: selection.anchor != selection.focus,
+            ..selection
+        });
         self.mark_dirty();
     }
 
@@ -323,6 +465,88 @@ impl TuiState {
     }
 }
 
+const fn relative_cell_in_viewport(
+    viewport: OutputViewport,
+    col: u16,
+    row: u16,
+) -> Option<CellPos> {
+    if col < viewport.x
+        || row < viewport.y
+        || col >= viewport.x.saturating_add(viewport.width)
+        || row >= viewport.y.saturating_add(viewport.height)
+    {
+        return None;
+    }
+
+    Some(CellPos {
+        col: col - viewport.x,
+        row: row - viewport.y,
+    })
+}
+
+const fn clamp_to_viewport(viewport: OutputViewport, col: u16, row: u16) -> CellPos {
+    let max_col = viewport.width.saturating_sub(1);
+    let max_row = viewport.height.saturating_sub(1);
+
+    let clamped_col = if col < viewport.x {
+        0
+    } else if col >= viewport.x.saturating_add(viewport.width) {
+        max_col
+    } else {
+        col - viewport.x
+    };
+    let clamped_row = if row < viewport.y {
+        0
+    } else if row >= viewport.y.saturating_add(viewport.height) {
+        max_row
+    } else {
+        row - viewport.y
+    };
+
+    CellPos {
+        col: clamped_col,
+        row: clamped_row,
+    }
+}
+
+fn build_selected_text(cells: &[Vec<String>], start: CellPos, end: CellPos) -> Option<String> {
+    if cells.is_empty() {
+        return None;
+    }
+    let height = cells.len();
+    let width = cells.first().map_or(0, Vec::len);
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let start_row = usize::from(start.row).min(height - 1);
+    let end_row = usize::from(end.row).min(height - 1);
+    let start_col = usize::from(start.col).min(width - 1);
+    let end_col = usize::from(end.col).min(width - 1);
+    let (first_row, first_col, last_row, last_col) = if (end_row, end_col) < (start_row, start_col)
+    {
+        (end_row, end_col, start_row, start_col)
+    } else {
+        (start_row, start_col, end_row, end_col)
+    };
+
+    let mut lines = Vec::new();
+    for row in first_row..=last_row {
+        let from_col = if row == first_row { first_col } else { 0 };
+        let to_col = if row == last_row { last_col } else { width - 1 };
+        let mut line = String::new();
+        for col in from_col..=to_col {
+            if let Some(cell) = cells.get(row).and_then(|cells_row| cells_row.get(col)) {
+                line.push_str(cell);
+            }
+        }
+        lines.push(line.trim_end().to_string());
+    }
+
+    let text = lines.join("\n").trim_end().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 fn truncate_preview(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -333,7 +557,7 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StateCommand, TuiState, truncate_preview};
+    use super::{OutputViewport, StateCommand, TuiState, truncate_preview};
     use crate::events::types::CoreEvent;
     use crate::tui::ui_action::UiAction;
 
@@ -516,9 +740,73 @@ mod tests {
         state.handle_ui_action(UiAction::MoveCursorUp);
         let mid_len = state.input_cursor_text().len();
         assert!(mid_len < end_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
 
         state.handle_ui_action(UiAction::MoveCursorDown);
         assert_eq!(state.input_cursor_text().len(), end_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn up_down_only_move_input_cursor_when_vertical_motion_is_possible() {
+        let mut state = TuiState::new();
+        state.set_input_inner_width(20);
+        state.handle_ui_action(UiAction::Paste("single-line".to_string()));
+        let cursor_len = state.input_cursor_text().len();
+
+        state.handle_ui_action(UiAction::MoveCursorUp);
+        assert_eq!(state.input_cursor_text().len(), cursor_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+
+        state.handle_ui_action(UiAction::MoveCursorDown);
+        assert_eq!(state.input_cursor_text().len(), cursor_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn output_selection_drag_copies_selected_cells() {
+        let mut state = TuiState::new();
+        state.set_output_viewport(OutputViewport {
+            x: 10,
+            y: 4,
+            width: 6,
+            height: 3,
+        });
+        state.set_output_cells(vec![
+            "ABCDEF".chars().map(|ch| ch.to_string()).collect(),
+            "GHIJKL".chars().map(|ch| ch.to_string()).collect(),
+            "MNOPQR".chars().map(|ch| ch.to_string()).collect(),
+        ]);
+
+        state.handle_ui_action(UiAction::OutputSelectStart { col: 11, row: 4 });
+        state.handle_ui_action(UiAction::OutputSelectDrag { col: 13, row: 5 });
+        state.handle_ui_action(UiAction::OutputSelectEnd { col: 13, row: 5 });
+
+        assert_eq!(
+            state.take_pending_copy_text(),
+            Some("BCDEF\nGHIJ".to_string())
+        );
+        assert_eq!(state.take_pending_copy_text(), None);
+    }
+
+    #[test]
+    fn output_selection_click_without_drag_does_not_copy() {
+        let mut state = TuiState::new();
+        state.set_output_viewport(OutputViewport {
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 2,
+        });
+        state.set_output_cells(vec![
+            "abcde".chars().map(|ch| ch.to_string()).collect(),
+            "fghij".chars().map(|ch| ch.to_string()).collect(),
+        ]);
+
+        state.handle_ui_action(UiAction::OutputSelectStart { col: 2, row: 1 });
+        state.handle_ui_action(UiAction::OutputSelectEnd { col: 2, row: 1 });
+
+        assert_eq!(state.take_pending_copy_text(), None);
     }
 
     #[test]

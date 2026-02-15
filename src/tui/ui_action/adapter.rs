@@ -1,5 +1,6 @@
 use crossterm::event::{
-    Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+    Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 
 use super::UiAction;
@@ -22,6 +23,10 @@ pub(in crate::tui) const fn is_quit_event(event: &CEvent) -> bool {
 }
 
 fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return UiAction::Ignore;
+    }
+
     if is_quit_key(&key) {
         let action = UiAction::Quit;
         debug_log_key_mapping(&key, &action);
@@ -146,6 +151,18 @@ const fn to_ui_action_from_mouse(mouse: MouseEvent) -> UiAction {
         },
         MouseEventKind::ScrollDown => UiAction::ScrollDown {
             lines: MOUSE_SCROLL_LINES,
+        },
+        MouseEventKind::Down(MouseButton::Left) => UiAction::OutputSelectStart {
+            col: mouse.column,
+            row: mouse.row,
+        },
+        MouseEventKind::Drag(MouseButton::Left) => UiAction::OutputSelectDrag {
+            col: mouse.column,
+            row: mouse.row,
+        },
+        MouseEventKind::Up(MouseButton::Left) => UiAction::OutputSelectEnd {
+            col: mouse.column,
+            row: mouse.row,
         },
         _ => UiAction::Ignore,
     }
@@ -295,6 +312,53 @@ mod tests {
     }
 
     #[test]
+    fn maps_mouse_selection_actions() {
+        let down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 12,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        let drag = MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 17,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        };
+        let up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 17,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        };
+
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(down)),
+            UiAction::OutputSelectStart { col: 12, row: 4 }
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(drag)),
+            UiAction::OutputSelectDrag { col: 17, row: 8 }
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(up)),
+            UiAction::OutputSelectEnd { col: 17, row: 8 }
+        );
+    }
+
+    #[test]
+    fn ignores_non_press_key_events() {
+        let released = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        };
+
+        assert_eq!(to_ui_action(CEvent::Key(released)), UiAction::Ignore);
+    }
+
+    #[test]
     fn quit_event_only_matches_quit_keys() {
         assert!(is_quit_event(&CEvent::Key(KeyEvent {
             code: KeyCode::Esc,
@@ -404,7 +468,7 @@ mod tests {
     fn ignores_non_scroll_mouse_and_non_quit_keys_for_quit_check() {
         assert_eq!(
             to_ui_action(CEvent::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
+                kind: MouseEventKind::Moved,
                 column: 0,
                 row: 0,
                 modifiers: KeyModifiers::NONE,

@@ -12,6 +12,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use super::{
+    clipboard,
     render::{self, RenderMeta},
     state::TuiState,
 };
@@ -42,6 +43,9 @@ impl UiRenderer {
 
         if should_draw {
             self.terminal.draw(state, &self.render_meta)?;
+            if let Some(text) = state.take_pending_copy_text() {
+                let _ = clipboard::copy_to_clipboard(&text);
+            }
         }
         self.running_status_last_draw_at = next_last_draw;
 
@@ -94,8 +98,8 @@ impl Drop for TerminalGuard {
         let _ = disable_raw_mode();
         let _ = execute!(
             self.terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
+            DisableMouseCapture,
+            LeaveAlternateScreen
         );
         let _ = self.terminal.show_cursor();
     }
