@@ -1,3 +1,4 @@
+mod clipboard;
 mod input_metrics;
 mod orchestrator;
 mod render;

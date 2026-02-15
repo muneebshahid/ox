@@ -26,6 +26,28 @@ enum RunPhase {
     Tool { name: String },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct OutputViewport {
+    pub(in crate::tui) x: u16,
+    pub(in crate::tui) y: u16,
+    pub(in crate::tui) width: u16,
+    pub(in crate::tui) height: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct CellPos {
+    pub(in crate::tui) col: u16,
+    pub(in crate::tui) row: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OutputSelection {
+    anchor: CellPos,
+    focus: CellPos,
+    selecting: bool,
+    pending_copy: bool,
+}
+
 struct InputState {
     buffer: InputBuffer, // Editable input text and cursor byte-offset state.
     inner_width: u16,    // Rendered inner width used for wrapped vertical cursor moves.
@@ -41,9 +63,12 @@ impl InputState {
 }
 
 struct OutputState {
-    log: String,                   // Append-only output log shown in the output pane.
-    scroll_lines_from_bottom: u16, // Manual scroll distance measured from bottom.
-    reasoning_trace_open: bool,    // Whether `[thinking]` trace is currently open.
+    log: String,                        // Append-only output log shown in the output pane.
+    scroll_lines_from_bottom: u16,      // Manual scroll distance measured from bottom.
+    reasoning_trace_open: bool,         // Whether `[thinking]` trace is currently open.
+    viewport: Option<OutputViewport>,   // Last rendered output viewport in terminal coordinates.
+    cells: Vec<Vec<String>>, // Last rendered output cells for copy-to-clipboard extraction.
+    selection: Option<OutputSelection>, // Active or completed output selection state.
 }
 
 impl OutputState {
@@ -52,6 +77,9 @@ impl OutputState {
             log: String::new(),
             scroll_lines_from_bottom: 0,
             reasoning_trace_open: false,
+            viewport: None,
+            cells: Vec::new(),
+            selection: None,
         }
     }
 }
@@ -113,6 +141,39 @@ impl TuiState {
         self.input.buffer.cursor_text()
     }
 
+    pub(in crate::tui) fn output_selection_range(&self) -> Option<(CellPos, CellPos)> {
+        let selection = self.output.selection?;
+        let first = selection.anchor;
+        let second = selection.focus;
+        if (second.row, second.col) < (first.row, first.col) {
+            Some((second, first))
+        } else {
+            Some((first, second))
+        }
+    }
+
+    pub(in crate::tui) fn take_pending_copy_text(&mut self) -> Option<String> {
+        let selection = self.output.selection?;
+        if !selection.pending_copy {
+            return None;
+        }
+        if selection.anchor == selection.focus {
+            self.output.selection = Some(OutputSelection {
+                pending_copy: false,
+                ..selection
+            });
+            return None;
+        }
+
+        let (start, end) = self.output_selection_range()?;
+        let text = build_selected_text(&self.output.cells, start, end)?;
+        self.output.selection = Some(OutputSelection {
+            pending_copy: false,
+            ..selection
+        });
+        Some(text)
+    }
+
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
         self.output.scroll_lines_from_bottom
     }
@@ -121,12 +182,16 @@ impl TuiState {
         &mut self,
         input_inner_width: u16,
         max_scroll_lines_from_bottom: u16,
+        output_viewport: OutputViewport,
+        output_cells: Vec<Vec<String>>,
     ) {
         self.input.inner_width = input_inner_width;
         self.output.scroll_lines_from_bottom = self
             .output
             .scroll_lines_from_bottom
             .min(max_scroll_lines_from_bottom);
+        self.output.viewport = Some(output_viewport);
+        self.output.cells = output_cells;
     }
 
     pub fn status_is_running(&self) -> bool {
@@ -251,6 +316,18 @@ impl TuiState {
                 self.scroll_down(lines);
                 StateCommand::None
             }
+            UiAction::OutputSelectStart { col, row } => {
+                self.begin_output_selection(col, row);
+                StateCommand::None
+            }
+            UiAction::OutputSelectDrag { col, row } => {
+                self.update_output_selection(col, row);
+                StateCommand::None
+            }
+            UiAction::OutputSelectEnd { col, row } => {
+                self.end_output_selection(col, row);
+                StateCommand::None
+            }
             UiAction::ViewportChanged => {
                 self.mark_dirty();
                 StateCommand::None
@@ -324,6 +401,59 @@ impl TuiState {
         self.mark_dirty();
     }
 
+    const fn begin_output_selection(&mut self, col: u16, row: u16) {
+        let Some(viewport) = self.output.viewport else {
+            return;
+        };
+        let Some(relative) = relative_cell_in_viewport(viewport, col, row) else {
+            if self.output.selection.is_some() {
+                self.output.selection = None;
+                self.mark_dirty();
+            }
+            return;
+        };
+
+        self.output.selection = Some(OutputSelection {
+            anchor: relative,
+            focus: relative,
+            selecting: true,
+            pending_copy: false,
+        });
+        self.mark_dirty();
+    }
+
+    const fn update_output_selection(&mut self, col: u16, row: u16) {
+        let Some(viewport) = self.output.viewport else {
+            return;
+        };
+        let Some(selection) = self.output.selection else {
+            return;
+        };
+        if !selection.selecting {
+            return;
+        }
+
+        let focus = clamp_to_viewport(viewport, col, row);
+        self.output.selection = Some(OutputSelection { focus, ..selection });
+        self.mark_dirty();
+    }
+
+    fn end_output_selection(&mut self, col: u16, row: u16) {
+        self.update_output_selection(col, row);
+        let Some(selection) = self.output.selection else {
+            return;
+        };
+        if !selection.selecting {
+            return;
+        }
+        self.output.selection = Some(OutputSelection {
+            selecting: false,
+            pending_copy: selection.anchor != selection.focus,
+            ..selection
+        });
+        self.mark_dirty();
+    }
+
     fn set_running_status(&mut self) {
         if self.status.running_started_at.is_none() {
             self.status.running_started_at = Some(Instant::now());
@@ -393,7 +523,12 @@ const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
     // Keep this exhaustive so newly added UiAction variants force an explicit
     // active-turn policy decision.
     match action {
-        UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged => true,
+        UiAction::ScrollUp { .. }
+        | UiAction::ScrollDown { .. }
+        | UiAction::OutputSelectStart { .. }
+        | UiAction::OutputSelectDrag { .. }
+        | UiAction::OutputSelectEnd { .. }
+        | UiAction::ViewportChanged => true,
         UiAction::Quit
         | UiAction::Insert(_)
         | UiAction::Backspace
@@ -415,6 +550,92 @@ const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
     }
 }
 
+const fn relative_cell_in_viewport(
+    viewport: OutputViewport,
+    col: u16,
+    row: u16,
+) -> Option<CellPos> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return None;
+    }
+    if col < viewport.x
+        || row < viewport.y
+        || col >= viewport.x.saturating_add(viewport.width)
+        || row >= viewport.y.saturating_add(viewport.height)
+    {
+        return None;
+    }
+
+    Some(CellPos {
+        col: col - viewport.x,
+        row: row - viewport.y,
+    })
+}
+
+const fn clamp_to_viewport(viewport: OutputViewport, col: u16, row: u16) -> CellPos {
+    let max_col = viewport.width.saturating_sub(1);
+    let max_row = viewport.height.saturating_sub(1);
+
+    let clamped_col = if col < viewport.x {
+        0
+    } else if col >= viewport.x.saturating_add(viewport.width) {
+        max_col
+    } else {
+        col - viewport.x
+    };
+    let clamped_row = if row < viewport.y {
+        0
+    } else if row >= viewport.y.saturating_add(viewport.height) {
+        max_row
+    } else {
+        row - viewport.y
+    };
+
+    CellPos {
+        col: clamped_col,
+        row: clamped_row,
+    }
+}
+
+fn build_selected_text(cells: &[Vec<String>], start: CellPos, end: CellPos) -> Option<String> {
+    if cells.is_empty() {
+        return None;
+    }
+
+    let height = cells.len();
+    let width = cells.first().map_or(0, Vec::len);
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let start_row = usize::from(start.row).min(height - 1);
+    let end_row = usize::from(end.row).min(height - 1);
+    let start_col = usize::from(start.col).min(width - 1);
+    let end_col = usize::from(end.col).min(width - 1);
+    let (first_row, first_col, last_row, last_col) = if (end_row, end_col) < (start_row, start_col)
+    {
+        (end_row, end_col, start_row, start_col)
+    } else {
+        (start_row, start_col, end_row, end_col)
+    };
+
+    let mut lines = Vec::new();
+    for row in first_row..=last_row {
+        let from_col = if row == first_row { first_col } else { 0 };
+        let to_col = if row == last_row { last_col } else { width - 1 };
+        let mut line = String::new();
+        for col in from_col..=to_col {
+            if let Some(cell) = cells.get(row).and_then(|cells_row| cells_row.get(col)) {
+                line.push_str(cell);
+            }
+        }
+        lines.push(line.trim_end().to_string());
+    }
+
+    let text = lines.join("\n").trim_end().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 fn truncate_preview(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -425,7 +646,7 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{StateCommand, TuiState, truncate_preview};
+    use super::{OutputViewport, StateCommand, TuiState, truncate_preview};
     use crate::events::types::CoreEvent;
     use crate::tui::ui_action::UiAction;
 
@@ -601,7 +822,17 @@ mod tests {
     #[test]
     fn cursor_moves_up_and_down_across_wrapped_input_rows() {
         let mut state = TuiState::new();
-        state.apply_render_sync(5, u16::MAX);
+        state.apply_render_sync(
+            5,
+            u16::MAX,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 2,
+            },
+            Vec::new(),
+        );
         state.handle_ui_action(UiAction::Paste("abcdefghij".to_string()));
         let end_len = state.input_cursor_text().len();
 
@@ -611,6 +842,60 @@ mod tests {
 
         state.handle_ui_action(UiAction::MoveCursorDown);
         assert_eq!(state.input_cursor_text().len(), end_len);
+    }
+
+    #[test]
+    fn output_selection_drag_copies_selected_cells() {
+        let mut state = TuiState::new();
+        state.apply_render_sync(
+            0,
+            u16::MAX,
+            OutputViewport {
+                x: 10,
+                y: 4,
+                width: 6,
+                height: 3,
+            },
+            vec![
+                "ABCDEF".chars().map(|ch| ch.to_string()).collect(),
+                "GHIJKL".chars().map(|ch| ch.to_string()).collect(),
+                "MNOPQR".chars().map(|ch| ch.to_string()).collect(),
+            ],
+        );
+
+        state.handle_ui_action(UiAction::OutputSelectStart { col: 11, row: 4 });
+        state.handle_ui_action(UiAction::OutputSelectDrag { col: 13, row: 5 });
+        state.handle_ui_action(UiAction::OutputSelectEnd { col: 13, row: 5 });
+
+        assert_eq!(
+            state.take_pending_copy_text(),
+            Some("BCDEF\nGHIJ".to_string())
+        );
+        assert_eq!(state.take_pending_copy_text(), None);
+    }
+
+    #[test]
+    fn output_selection_click_without_drag_does_not_copy() {
+        let mut state = TuiState::new();
+        state.apply_render_sync(
+            0,
+            u16::MAX,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 5,
+                height: 2,
+            },
+            vec![
+                "abcde".chars().map(|ch| ch.to_string()).collect(),
+                "fghij".chars().map(|ch| ch.to_string()).collect(),
+            ],
+        );
+
+        state.handle_ui_action(UiAction::OutputSelectStart { col: 2, row: 1 });
+        state.handle_ui_action(UiAction::OutputSelectEnd { col: 2, row: 1 });
+
+        assert_eq!(state.take_pending_copy_text(), None);
     }
 
     #[test]
@@ -722,12 +1007,52 @@ mod tests {
     }
 
     #[test]
+    fn active_turn_policy_allows_output_selection() {
+        let mut state = TuiState::new();
+        state.apply_render_sync(
+            0,
+            u16::MAX,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2,
+            },
+            vec![
+                "abcd".chars().map(|ch| ch.to_string()).collect(),
+                "efgh".chars().map(|ch| ch.to_string()).collect(),
+            ],
+        );
+
+        let start = state
+            .handle_ui_action_during_active_turn(UiAction::OutputSelectStart { col: 1, row: 0 });
+        assert_eq!(start, StateCommand::None);
+        let drag = state
+            .handle_ui_action_during_active_turn(UiAction::OutputSelectDrag { col: 2, row: 1 });
+        assert_eq!(drag, StateCommand::None);
+        let end =
+            state.handle_ui_action_during_active_turn(UiAction::OutputSelectEnd { col: 2, row: 1 });
+        assert_eq!(end, StateCommand::None);
+        assert_eq!(state.take_pending_copy_text(), Some("bcd\nefg".to_string()));
+    }
+
+    #[test]
     fn clamps_scroll_offset_to_current_max_when_content_cannot_scroll_further() {
         let mut state = TuiState::new();
         state.handle_ui_action(UiAction::ScrollUp { lines: 100 });
         assert_eq!(state.output_scroll_lines_from_bottom(), 100);
 
-        state.apply_render_sync(0, 5);
+        state.apply_render_sync(
+            0,
+            5,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+            Vec::new(),
+        );
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
     }
