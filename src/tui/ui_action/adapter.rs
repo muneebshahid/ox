@@ -80,7 +80,9 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
 
 fn should_insert_newline_for_enter(key: KeyEvent) -> bool {
     matches!(key.code, KeyCode::Enter)
-        && key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+        && key
+            .modifiers
+            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
         && !key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
@@ -90,10 +92,10 @@ const fn cursor_and_delete_shortcut(key: KeyEvent) -> Option<UiAction> {
     }
 
     match key.code {
-        KeyCode::Char('a' | 'A') => Some(UiAction::MoveCursorHome),
-        KeyCode::Char('e' | 'E') => Some(UiAction::MoveCursorEnd),
-        KeyCode::Char('u' | 'U') => Some(UiAction::DeleteToStart),
-        KeyCode::Char('k' | 'K') => Some(UiAction::DeleteToEnd),
+        KeyCode::Char('a' | 'A') => Some(UiAction::MoveCursorLineStart),
+        KeyCode::Char('e' | 'E') => Some(UiAction::MoveCursorLineEnd),
+        KeyCode::Char('u' | 'U') => Some(UiAction::DeleteToLineStart),
+        KeyCode::Char('k' | 'K') => Some(UiAction::DeleteToLineEnd),
         _ => None,
     }
 }
@@ -123,8 +125,8 @@ fn debug_log_key_mapping(key: &KeyEvent, action: &UiAction) {
 
     // Debug logs intentionally go to a file instead of stderr to avoid corrupting
     // the active terminal UI. Override path with OX_DEBUG_KEYS_FILE.
-    let path =
-        std::env::var("OX_DEBUG_KEYS_FILE").unwrap_or_else(|_| "/tmp/ox-debug-keys.log".to_string());
+    let path = std::env::var("OX_DEBUG_KEYS_FILE")
+        .unwrap_or_else(|_| "/tmp/ox-debug-keys.log".to_string());
     let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -360,28 +362,28 @@ mod tests {
                 KeyCode::Char('a'),
                 KeyModifiers::CONTROL
             ))),
-            UiAction::MoveCursorHome
+            UiAction::MoveCursorLineStart
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('e'),
                 KeyModifiers::CONTROL
             ))),
-            UiAction::MoveCursorEnd
+            UiAction::MoveCursorLineEnd
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('u'),
                 KeyModifiers::CONTROL
             ))),
-            UiAction::DeleteToStart
+            UiAction::DeleteToLineStart
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('k'),
                 KeyModifiers::CONTROL
             ))),
-            UiAction::DeleteToEnd
+            UiAction::DeleteToLineEnd
         );
     }
 

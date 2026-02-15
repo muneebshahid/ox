@@ -57,20 +57,22 @@ impl InputState {
         true
     }
 
-    pub(super) fn delete_to_start(&mut self) -> bool {
-        if self.cursor_byte == 0 {
+    pub(super) fn delete_to_line_start(&mut self) -> bool {
+        let target = line_start_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
             return false;
         }
-        self.text.replace_range(0..self.cursor_byte, "");
-        self.cursor_byte = 0;
+        self.text.replace_range(target..self.cursor_byte, "");
+        self.cursor_byte = target;
         true
     }
 
-    pub(super) fn delete_to_end(&mut self) -> bool {
-        if self.cursor_byte == self.text.len() {
+    pub(super) fn delete_to_line_end(&mut self) -> bool {
+        let target = line_end_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
             return false;
         }
-        self.text.truncate(self.cursor_byte);
+        self.text.replace_range(self.cursor_byte..target, "");
         true
     }
 
@@ -101,6 +103,24 @@ impl InputState {
 
     pub(super) fn move_word_right(&mut self) -> bool {
         let target = next_word_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
+            return false;
+        }
+        self.cursor_byte = target;
+        true
+    }
+
+    pub(super) fn move_line_start(&mut self) -> bool {
+        let target = line_start_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
+            return false;
+        }
+        self.cursor_byte = target;
+        true
+    }
+
+    pub(super) fn move_line_end(&mut self) -> bool {
+        let target = line_end_boundary(&self.text, self.cursor_byte);
         if target == self.cursor_byte {
             return false;
         }
@@ -152,6 +172,18 @@ fn next_char_boundary(value: &str, at: usize) -> Option<usize> {
         .chars()
         .next()
         .map(|ch| at.saturating_add(ch.len_utf8()))
+}
+
+fn line_start_boundary(value: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(value.len());
+    value[..cursor].rfind('\n').map_or(0, |idx| idx + 1)
+}
+
+fn line_end_boundary(value: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(value.len());
+    value[cursor..]
+        .find('\n')
+        .map_or(value.len(), |offset| cursor + offset)
 }
 
 fn prev_word_boundary(value: &str, cursor: usize) -> usize {
@@ -378,6 +410,20 @@ mod tests {
     }
 
     #[test]
+    fn move_line_start_and_end_stay_within_current_line() {
+        let mut input = InputState::new();
+        input.paste("ab\ncd\nef");
+
+        assert!(input.move_line_start());
+        assert_eq!(input.cursor_text(), "ab\ncd\n");
+        assert!(!input.move_line_start());
+
+        assert!(input.move_line_end());
+        assert_eq!(input.cursor_text(), "ab\ncd\nef");
+        assert!(!input.move_line_end());
+    }
+
+    #[test]
     fn delete_forward_removes_character_at_cursor() {
         let mut input = InputState::new();
         input.paste("abdc");
@@ -400,29 +446,20 @@ mod tests {
     }
 
     #[test]
-    fn delete_to_start_removes_all_text_before_cursor() {
+    fn delete_to_line_start_and_end_only_affect_current_line() {
         let mut input = InputState::new();
-        input.paste("hello");
-        input.move_left();
-        input.move_left();
-
-        assert!(input.delete_to_start());
-        assert_eq!(input.text(), "lo");
-        assert_eq!(input.cursor_text(), "");
-        assert!(!input.delete_to_start());
-    }
-
-    #[test]
-    fn delete_to_end_removes_all_text_after_cursor() {
-        let mut input = InputState::new();
-        input.paste("hello");
-        input.move_left();
+        input.paste("ab\ncd\nef");
         input.move_left();
 
-        assert!(input.delete_to_end());
-        assert_eq!(input.text(), "hel");
-        assert_eq!(input.cursor_text(), "hel");
-        assert!(!input.delete_to_end());
+        assert!(input.delete_to_line_start());
+        assert_eq!(input.text(), "ab\ncd\nf");
+        assert_eq!(input.cursor_text(), "ab\ncd\n");
+        assert!(!input.delete_to_line_start());
+
+        assert!(input.delete_to_line_end());
+        assert_eq!(input.text(), "ab\ncd\n");
+        assert_eq!(input.cursor_text(), "ab\ncd\n");
+        assert!(!input.delete_to_line_end());
     }
 
     #[test]

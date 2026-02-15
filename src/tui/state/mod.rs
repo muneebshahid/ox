@@ -153,78 +153,28 @@ impl TuiState {
                 self.mark_dirty();
                 StateCommand::None
             }
-            UiAction::Backspace => {
-                if self.input.backspace() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
+            UiAction::Backspace => self.finish_input_mutation(InputState::backspace),
+            UiAction::Delete => self.finish_input_mutation(InputState::delete_forward),
+            UiAction::DeleteToLineStart => {
+                self.finish_input_mutation(InputState::delete_to_line_start)
             }
-            UiAction::Delete => {
-                if self.input.delete_forward() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::DeleteToStart => {
-                if self.input.delete_to_start() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::DeleteToEnd => {
-                if self.input.delete_to_end() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::MoveCursorLeft => {
-                if self.input.move_left() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::MoveCursorRight => {
-                if self.input.move_right() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::MoveCursorWordLeft => {
-                if self.input.move_word_left() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
+            UiAction::DeleteToLineEnd => self.finish_input_mutation(InputState::delete_to_line_end),
+            UiAction::MoveCursorLeft => self.finish_input_mutation(InputState::move_left),
+            UiAction::MoveCursorRight => self.finish_input_mutation(InputState::move_right),
+            UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputState::move_word_left),
             UiAction::MoveCursorWordRight => {
-                if self.input.move_word_right() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
+                self.finish_input_mutation(InputState::move_word_right)
             }
-            UiAction::MoveCursorHome => {
-                if self.input.move_home() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
+            UiAction::MoveCursorLineStart => {
+                self.finish_input_mutation(InputState::move_line_start)
             }
-            UiAction::MoveCursorEnd => {
-                if self.input.move_end() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
-            UiAction::DeleteWordLeft => {
-                if self.input.delete_word_left() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
-            }
+            UiAction::MoveCursorLineEnd => self.finish_input_mutation(InputState::move_line_end),
+            UiAction::MoveCursorHome => self.finish_input_mutation(InputState::move_home),
+            UiAction::MoveCursorEnd => self.finish_input_mutation(InputState::move_end),
+            UiAction::DeleteWordLeft => self.finish_input_mutation(InputState::delete_word_left),
             UiAction::Paste(pasted) => {
                 self.input.paste(&pasted);
-                if !pasted.is_empty() {
-                    self.mark_dirty();
-                }
-                StateCommand::None
+                self.finish_input_edit(!pasted.is_empty())
             }
             UiAction::ScrollUp { lines } => {
                 self.scroll_up(lines);
@@ -242,6 +192,21 @@ impl TuiState {
             UiAction::Quit => StateCommand::Quit,
             UiAction::Ignore => StateCommand::None,
         }
+    }
+
+    const fn finish_input_edit(&mut self, changed: bool) -> StateCommand {
+        if changed {
+            self.mark_dirty();
+        }
+        StateCommand::None
+    }
+
+    fn finish_input_mutation(
+        &mut self,
+        mutator: impl FnOnce(&mut InputState) -> bool,
+    ) -> StateCommand {
+        let changed = mutator(&mut self.input);
+        self.finish_input_edit(changed)
     }
 
     fn submit_input(&mut self) -> StateCommand {
@@ -560,23 +525,25 @@ mod tests {
     }
 
     #[test]
-    fn delete_to_start_and_end_apply_at_cursor_position() {
+    fn line_navigation_and_delete_apply_within_current_line() {
         let mut state = TuiState::new();
-        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+        state.handle_ui_action(UiAction::Paste("ab\ncd\nef".to_string()));
+
+        state.handle_ui_action(UiAction::MoveCursorLineStart);
+        assert_eq!(state.input_cursor_text(), "ab\ncd\n");
+
+        state.handle_ui_action(UiAction::DeleteToLineEnd);
+        assert_eq!(state.input(), "ab\ncd\n");
+        assert_eq!(state.input_cursor_text(), "ab\ncd\n");
+
         state.handle_ui_action(UiAction::MoveCursorLeft);
         state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::DeleteToLineStart);
+        assert_eq!(state.input(), "ab\nd\n");
+        assert_eq!(state.input_cursor_text(), "ab\n");
 
-        state.handle_ui_action(UiAction::DeleteToStart);
-        assert_eq!(state.input(), "lo");
-        assert_eq!(state.input_cursor_text(), "");
-
-        state.handle_ui_action(UiAction::Paste("hel".to_string()));
-        assert_eq!(state.input(), "hello");
-        assert_eq!(state.input_cursor_text(), "hel");
-
-        state.handle_ui_action(UiAction::DeleteToEnd);
-        assert_eq!(state.input(), "hel");
-        assert_eq!(state.input_cursor_text(), "hel");
+        state.handle_ui_action(UiAction::MoveCursorLineEnd);
+        assert_eq!(state.input_cursor_text(), "ab\nd");
     }
 
     #[test]
