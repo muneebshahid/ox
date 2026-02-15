@@ -39,6 +39,12 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         return word_action;
     }
 
+    if should_insert_newline_for_enter(key) {
+        let action = UiAction::Insert('\n');
+        debug_log_key_mapping(&key, &action);
+        return action;
+    }
+
     let action = match key.code {
         KeyCode::Enter => UiAction::Submit,
         KeyCode::Backspace => UiAction::Backspace,
@@ -70,6 +76,12 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     };
     debug_log_key_mapping(&key, &action);
     action
+}
+
+fn should_insert_newline_for_enter(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Enter)
+        && key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 const fn cursor_and_delete_shortcut(key: KeyEvent) -> Option<UiAction> {
@@ -312,6 +324,20 @@ mod tests {
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Enter))),
             UiAction::Submit
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Enter,
+                KeyModifiers::SHIFT
+            ))),
+            UiAction::Insert('\n')
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Enter,
+                KeyModifiers::ALT
+            ))),
+            UiAction::Insert('\n')
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Backspace))),

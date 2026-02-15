@@ -128,8 +128,23 @@ fn wrapped_content_height(input: &str, width: u16, max_rows: u16) -> u16 {
 /// Output:
 /// - `(col, row)` position relative to the top-left of the measured area.
 fn cursor_offset(input: &str, width: u16, height: u16) -> (u16, u16) {
+    let trailing_newlines = trailing_newline_count(input);
+    if trailing_newlines > 0 {
+        let base_row = last_rendered_cell(input, width, height).map_or(0, |(_, row)| row);
+        let row = base_row.saturating_add(trailing_newlines);
+        return (0, row.min(height.saturating_sub(1)));
+    }
+
     last_rendered_cell(input, width, height)
         .map_or((0, 0), |(col, row)| advance_cursor(col, row, width, height))
+}
+
+fn rendered_row_count(input: &str, width: u16, max_rows: u16) -> u16 {
+    let base_rows = last_rendered_cell(input, width, max_rows)
+        .map_or(1_u16, |(_, last_row)| last_row.saturating_add(1));
+    base_rows
+        .saturating_add(trailing_newline_count(input))
+        .min(max_rows)
 }
 
 const fn advance_cursor(col: u16, row: u16, width: u16, height: u16) -> (u16, u16) {
@@ -142,11 +157,9 @@ const fn advance_cursor(col: u16, row: u16, width: u16, height: u16) -> (u16, u1
     (width.saturating_sub(1), height.saturating_sub(1))
 }
 
-fn rendered_row_count(input: &str, width: u16, max_rows: u16) -> u16 {
-    let Some((_, last_row)) = last_rendered_cell(input, width, max_rows) else {
-        return 1.min(max_rows);
-    };
-    last_row.saturating_add(1)
+fn trailing_newline_count(input: &str) -> u16 {
+    let trailing = input.chars().rev().take_while(|ch| *ch == '\n').count();
+    u16::try_from(trailing).unwrap_or(u16::MAX)
 }
 
 fn last_rendered_cell(input: &str, width: u16, height: u16) -> Option<(u16, u16)> {
@@ -199,6 +212,11 @@ mod tests {
     }
 
     #[test]
+    fn moves_cursor_to_next_line_for_trailing_newline() {
+        assert_eq!(cursor_offset("hello\n", 20, 5), (0, 1));
+    }
+
+    #[test]
     fn matches_word_wrapping_for_space_separated_text() {
         assert_eq!(cursor_offset("> hello world", 8, 5), (5, 1));
     }
@@ -217,6 +235,11 @@ mod tests {
     #[test]
     fn height_rows_accounts_for_wrapping() {
         assert_eq!(height_rows("abcd", 4, 10), 4);
+    }
+
+    #[test]
+    fn height_rows_reserves_extra_row_for_trailing_newline() {
+        assert_eq!(height_rows("hello\n", 20, 10), 4);
     }
 
     #[test]
