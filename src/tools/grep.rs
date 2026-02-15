@@ -51,8 +51,8 @@ fn parse_args(args: &serde_json::Value) -> Result<GrepArgs<'_>, String> {
     })
 }
 
-fn execute(args: &GrepArgs) -> Result<String, String> {
-    let mut cmd = Command::new("rg");
+fn execute_with_program(args: &GrepArgs, program: &str) -> Result<String, String> {
+    let mut cmd = Command::new(program);
     cmd.args(["-n", "--no-heading"]);
 
     if args.ignore_case {
@@ -70,16 +70,34 @@ fn execute(args: &GrepArgs) -> Result<String, String> {
 
     cmd.args([args.pattern, args.path]);
 
-    let output = cmd
-        .output()
-        .or_else(|_| {
-            Command::new("grep")
-                .args(["-rn", args.pattern, args.path])
-                .output()
-        })
-        .map_err(|e| format!("Error: {e}"))?;
+    let output = cmd.output().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            "Error: ripgrep (rg) is required but was not found in PATH".to_string()
+        } else {
+            format!("Error: failed to run ripgrep (rg): {e}")
+        }
+    })?;
+
+    if !output.status.success() {
+        // ripgrep exits with code 1 when no matches are found.
+        if output.status.code() == Some(1) {
+            return Ok(String::new());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(format!(
+                "Error: ripgrep (rg) exited with status {}",
+                output.status
+            ));
+        }
+        return Err(format!("Error: {stderr}"));
+    }
 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn execute(args: &GrepArgs) -> Result<String, String> {
+    execute_with_program(args, "rg")
 }
 
 fn format_output(stdout: &str, pattern: &str, limit: usize) -> String {
@@ -238,5 +256,27 @@ mod tests {
             .filter(|l| l.contains("hello") || l.contains("Hello"))
             .collect();
         assert_eq!(match_lines.len(), 1);
+    }
+
+    #[test]
+    fn missing_ripgrep_reports_clear_error() {
+        let args = GrepArgs {
+            pattern: "hello",
+            path: ".",
+            glob: None,
+            ignore_case: false,
+            literal: false,
+            context: None,
+            limit: 100,
+        };
+
+        let result = execute_with_program(&args, "ox_missing_rg_binary_for_test");
+        assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("ripgrep (rg) is required but was not found in PATH")
+        );
     }
 }
