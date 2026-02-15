@@ -165,6 +165,18 @@ impl TuiState {
                 }
                 StateCommand::None
             }
+            UiAction::DeleteToStart => {
+                if self.input.delete_to_start() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::DeleteToEnd => {
+                if self.input.delete_to_end() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
             UiAction::MoveCursorLeft => {
                 if self.input.move_left() {
                     self.mark_dirty();
@@ -527,6 +539,26 @@ mod tests {
 
         state.handle_ui_action(UiAction::MoveCursorEnd);
         assert_eq!(state.input_cursor_text(), "ello");
+    }
+
+    #[test]
+    fn delete_to_start_and_end_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+
+        state.handle_ui_action(UiAction::DeleteToStart);
+        assert_eq!(state.input(), "lo");
+        assert_eq!(state.input_cursor_text(), "");
+
+        state.handle_ui_action(UiAction::Paste("hel".to_string()));
+        assert_eq!(state.input(), "hello");
+        assert_eq!(state.input_cursor_text(), "hel");
+
+        state.handle_ui_action(UiAction::DeleteToEnd);
+        assert_eq!(state.input(), "hel");
+        assert_eq!(state.input_cursor_text(), "hel");
     }
 
     #[test]

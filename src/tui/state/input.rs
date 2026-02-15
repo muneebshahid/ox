@@ -57,6 +57,23 @@ impl InputState {
         true
     }
 
+    pub(super) fn delete_to_start(&mut self) -> bool {
+        if self.cursor_byte == 0 {
+            return false;
+        }
+        self.text.replace_range(0..self.cursor_byte, "");
+        self.cursor_byte = 0;
+        true
+    }
+
+    pub(super) fn delete_to_end(&mut self) -> bool {
+        if self.cursor_byte == self.text.len() {
+            return false;
+        }
+        self.text.truncate(self.cursor_byte);
+        true
+    }
+
     pub(super) fn move_left(&mut self) -> bool {
         let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte) else {
             return false;
@@ -257,5 +274,31 @@ mod tests {
         assert!(!input.delete_forward());
         assert_eq!(input.text(), "abc");
         assert_eq!(input.cursor_text(), "abc");
+    }
+
+    #[test]
+    fn delete_to_start_removes_all_text_before_cursor() {
+        let mut input = InputState::new();
+        input.paste("hello");
+        input.move_left();
+        input.move_left();
+
+        assert!(input.delete_to_start());
+        assert_eq!(input.text(), "lo");
+        assert_eq!(input.cursor_text(), "");
+        assert!(!input.delete_to_start());
+    }
+
+    #[test]
+    fn delete_to_end_removes_all_text_after_cursor() {
+        let mut input = InputState::new();
+        input.paste("hello");
+        input.move_left();
+        input.move_left();
+
+        assert!(input.delete_to_end());
+        assert_eq!(input.text(), "hel");
+        assert_eq!(input.cursor_text(), "hel");
+        assert!(!input.delete_to_end());
     }
 }

@@ -5,6 +5,8 @@ pub enum UiAction {
     Insert(char),
     Backspace,
     Delete,
+    DeleteToStart,
+    DeleteToEnd,
     MoveCursorLeft,
     MoveCursorRight,
     MoveCursorHome,

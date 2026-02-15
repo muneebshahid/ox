@@ -27,7 +27,7 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         return UiAction::Quit;
     }
 
-    if let Some(shortcut_action) = home_end_shortcut(key) {
+    if let Some(shortcut_action) = cursor_and_delete_shortcut(key) {
         return shortcut_action;
     }
 
@@ -62,7 +62,7 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     }
 }
 
-const fn home_end_shortcut(key: KeyEvent) -> Option<UiAction> {
+const fn cursor_and_delete_shortcut(key: KeyEvent) -> Option<UiAction> {
     if !key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
         return None;
     }
@@ -70,6 +70,8 @@ const fn home_end_shortcut(key: KeyEvent) -> Option<UiAction> {
     match key.code {
         KeyCode::Char('a' | 'A') => Some(UiAction::MoveCursorHome),
         KeyCode::Char('e' | 'E') => Some(UiAction::MoveCursorEnd),
+        KeyCode::Char('u' | 'U') => Some(UiAction::DeleteToStart),
+        KeyCode::Char('k' | 'K') => Some(UiAction::DeleteToEnd),
         _ => None,
     }
 }
@@ -233,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_ctrl_a_and_ctrl_e_to_home_and_end() {
+    fn maps_ctrl_cursor_and_delete_shortcuts() {
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('a'),
@@ -247,6 +249,20 @@ mod tests {
                 KeyModifiers::CONTROL
             ))),
             UiAction::MoveCursorEnd
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::DeleteToStart
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('k'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::DeleteToEnd
         );
     }
 
