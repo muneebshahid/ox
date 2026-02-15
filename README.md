@@ -3,9 +3,9 @@
 [![CI](https://github.com/muneebshahid/ox/actions/workflows/ci.yml/badge.svg)](https://github.com/muneebshahid/ox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-| Screenshot |
-| :--------: |
-| ![ox screenshot](assets/img-readme.png) |
+<p align="center">
+  <img src="assets/img.png" alt="ox screenshot" width="720" />
+</p>
 
 A minimal CLI coding agent in Rust. It connects to OpenAI's Responses API with streaming, provides an interactive REPL, and executes tools autonomously in an agent loop.
 
@@ -13,7 +13,7 @@ A minimal CLI coding agent in Rust. It connects to OpenAI's Responses API with s
 
 Early-stage and evolving quickly. The core loop and TUI are usable, but APIs and internals may change between releases.
 
-## Prerequisites
+## Prerequisites (from source)
 
 - Rust `1.87+` (edition 2024)
 - `cargo`
@@ -23,7 +23,13 @@ Early-stage and evolving quickly. The core loop and TUI are usable, but APIs and
 
 If `rg` or `fd` are missing, `ox` falls back to `grep` and `find`.
 
-## Quickstart
+## Install (Homebrew)
+
+```bash
+brew install muneebshahid/tap/ox
+```
+
+## Quickstart (from source)
 
 ```bash
 git clone https://github.com/muneebshahid/ox.git
