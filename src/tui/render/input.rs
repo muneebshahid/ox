@@ -9,6 +9,7 @@ use ratatui::{
 const INPUT_PROMPT_PREFIX: &str = "> ";
 const INPUT_BORDER_ROWS: u16 = 2;
 const CURSOR_SENTINEL_SYMBOL: &str = "\0";
+const INPUT_WRAP: Wrap = Wrap { trim: false };
 
 /// Draws the input pane (prompt + typed text) at the bottom of the screen.
 ///
@@ -24,7 +25,7 @@ const CURSOR_SENTINEL_SYMBOL: &str = "\0";
 pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     let input = Paragraph::new(input_display_text(state.input()))
         .block(Block::default().borders(Borders::TOP | Borders::BOTTOM))
-        .wrap(Wrap { trim: false });
+        .wrap(INPUT_WRAP);
     frame.render_widget(input, area);
 }
 
@@ -106,11 +107,7 @@ fn wrapped_content_height(input: &str, width: u16, max_rows: u16) -> u16 {
         return 1.min(max_rows);
     }
 
-    let Some((_, last_row)) = rendered_last_cell(&input_display_text(input), width, max_rows)
-    else {
-        return 1.min(max_rows);
-    };
-    last_row.saturating_add(1)
+    rendered_row_count(&input_display_text(input), width, max_rows)
 }
 
 /// Computes wrapped cursor position for arbitrary text in a bounded rectangle.
@@ -121,19 +118,14 @@ fn wrapped_content_height(input: &str, width: u16, max_rows: u16) -> u16 {
 /// - `height`: available height in rows.
 ///
 /// Behavior:
-/// - Advances by one column per character.
-/// - Wraps to next row when column reaches `width`.
-/// - Handles explicit newline characters by resetting column and advancing row.
+/// - Uses paragraph rendering with wrapping (`trim = false`) to mirror UI behavior.
+/// - Finds the last rendered cell and advances cursor by one cell.
 /// - Clamps to bottom-right cell when text exceeds visible input area.
 ///
 /// Output:
 /// - `(col, row)` position relative to the top-left of the measured area.
 fn cursor_offset(input: &str, width: u16, height: u16) -> (u16, u16) {
-    if width == 0 || height == 0 {
-        return (0, 0);
-    }
-
-    rendered_last_cell(input, width, height)
+    last_rendered_cell(input, width, height)
         .map_or((0, 0), |(col, row)| advance_cursor(col, row, width, height))
 }
 
@@ -147,7 +139,14 @@ const fn advance_cursor(col: u16, row: u16, width: u16, height: u16) -> (u16, u1
     (width.saturating_sub(1), height.saturating_sub(1))
 }
 
-fn rendered_last_cell(input: &str, width: u16, height: u16) -> Option<(u16, u16)> {
+fn rendered_row_count(input: &str, width: u16, max_rows: u16) -> u16 {
+    let Some((_, last_row)) = last_rendered_cell(input, width, max_rows) else {
+        return 1.min(max_rows);
+    };
+    last_row.saturating_add(1)
+}
+
+fn last_rendered_cell(input: &str, width: u16, height: u16) -> Option<(u16, u16)> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -158,7 +157,7 @@ fn rendered_last_cell(input: &str, width: u16, height: u16) -> Option<(u16, u16)
     let mut scratch = Buffer::filled(area, sentinel);
 
     Paragraph::new(input.to_string())
-        .wrap(Wrap { trim: false })
+        .wrap(INPUT_WRAP)
         .render(area, &mut scratch);
 
     for row in (0..height).rev() {
