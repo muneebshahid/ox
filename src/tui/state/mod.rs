@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use super::ui_action::UiAction;
 use crate::events::types::CoreEvent;
+use input::InputState;
 
 pub(super) mod input;
 mod tool_activity;
@@ -27,7 +28,7 @@ enum RunPhase {
 pub struct TuiState {
     transcript: String,
     status: String,
-    input: String,
+    input: InputState,
     output_scroll_lines_from_bottom: u16,
     dirty: bool,
     running_started_at: Option<Instant>,
@@ -40,7 +41,7 @@ impl TuiState {
         Self {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
-            input: String::new(),
+            input: InputState::new(),
             output_scroll_lines_from_bottom: 0,
             dirty: true,
             running_started_at: None,
@@ -58,7 +59,7 @@ impl TuiState {
     }
 
     pub fn input(&self) -> &str {
-        &self.input
+        self.input.text()
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
@@ -144,17 +145,17 @@ impl TuiState {
     pub fn handle_ui_action(&mut self, action: UiAction) -> StateCommand {
         match action {
             UiAction::Insert(c) => {
-                self.input.push(c);
+                self.input.insert_char(c);
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Backspace => {
-                self.input.pop();
+                self.input.backspace();
                 self.mark_dirty();
                 StateCommand::None
             }
             UiAction::Paste(pasted) => {
-                self.input.push_str(&pasted);
+                self.input.paste(&pasted);
                 self.mark_dirty();
                 StateCommand::None
             }
@@ -177,7 +178,7 @@ impl TuiState {
     }
 
     fn submit_input(&mut self) -> StateCommand {
-        let submitted = self.input.trim().to_string();
+        let submitted = self.input.text().trim().to_string();
         self.input.clear();
         self.mark_dirty();
 
