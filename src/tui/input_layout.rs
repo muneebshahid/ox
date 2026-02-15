@@ -70,7 +70,9 @@ fn measurement_height_with_prompt(input: &str, width: u16) -> u16 {
         .filter(|ch| ch.is_whitespace() && *ch != '\n')
         .count();
 
-    let wrapped_chars = prompt_chars.saturating_add(chars).div_ceil(usize::from(width));
+    let wrapped_chars = prompt_chars
+        .saturating_add(chars)
+        .div_ceil(usize::from(width));
     let upper_bound = wrapped_chars
         .saturating_add(newlines)
         .saturating_add(spaces)

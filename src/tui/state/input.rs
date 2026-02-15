@@ -154,7 +154,10 @@ impl InputState {
         }
 
         let positions = input_layout::cursor_positions_with_prompt(&self.text, width);
-        let Some(current) = positions.iter().find(|pos| pos.byte == self.cursor_byte).copied()
+        let Some(current) = positions
+            .iter()
+            .find(|pos| pos.byte == self.cursor_byte)
+            .copied()
         else {
             return false;
         };
