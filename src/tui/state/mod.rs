@@ -10,6 +10,7 @@ mod tool_activity;
 
 const STATUS_IDLE: &str = "Idle";
 const STATUS_RUNNING: &str = "Running";
+const VERTICAL_CURSOR_SCROLL_FALLBACK_LINES: u16 = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StateCommand {
@@ -167,14 +168,8 @@ impl TuiState {
             UiAction::DeleteToLineEnd => self.finish_input_mutation(InputState::delete_to_line_end),
             UiAction::MoveCursorLeft => self.finish_input_mutation(InputState::move_left),
             UiAction::MoveCursorRight => self.finish_input_mutation(InputState::move_right),
-            UiAction::MoveCursorUp => {
-                let width = self.input_inner_width;
-                self.finish_input_mutation(|input| input.move_up(width))
-            }
-            UiAction::MoveCursorDown => {
-                let width = self.input_inner_width;
-                self.finish_input_mutation(|input| input.move_down(width))
-            }
+            UiAction::MoveCursorUp => self.move_cursor_up_or_scroll_output(),
+            UiAction::MoveCursorDown => self.move_cursor_down_or_scroll_output(),
             UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputState::move_word_left),
             UiAction::MoveCursorWordRight => {
                 self.finish_input_mutation(InputState::move_word_right)
@@ -238,6 +233,26 @@ impl TuiState {
         self.set_running_status();
         self.mark_dirty();
         StateCommand::Submit(submitted)
+    }
+
+    fn move_cursor_up_or_scroll_output(&mut self) -> StateCommand {
+        let width = self.input_inner_width;
+        if self.input.move_up(width) {
+            self.mark_dirty();
+        } else {
+            self.scroll_up(VERTICAL_CURSOR_SCROLL_FALLBACK_LINES);
+        }
+        StateCommand::None
+    }
+
+    fn move_cursor_down_or_scroll_output(&mut self) -> StateCommand {
+        let width = self.input_inner_width;
+        if self.input.move_down(width) {
+            self.mark_dirty();
+        } else {
+            self.scroll_down(VERTICAL_CURSOR_SCROLL_FALLBACK_LINES);
+        }
+        StateCommand::None
     }
 
     const fn scroll_up(&mut self, lines: u16) {
@@ -516,9 +531,27 @@ mod tests {
         state.handle_ui_action(UiAction::MoveCursorUp);
         let mid_len = state.input_cursor_text().len();
         assert!(mid_len < end_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
 
         state.handle_ui_action(UiAction::MoveCursorDown);
         assert_eq!(state.input_cursor_text().len(), end_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn up_down_scroll_output_when_cursor_cannot_move_vertically() {
+        let mut state = TuiState::new();
+        state.set_input_inner_width(20);
+        state.handle_ui_action(UiAction::Paste("single-line".to_string()));
+        let cursor_len = state.input_cursor_text().len();
+
+        state.handle_ui_action(UiAction::MoveCursorUp);
+        assert_eq!(state.input_cursor_text().len(), cursor_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 1);
+
+        state.handle_ui_action(UiAction::MoveCursorDown);
+        assert_eq!(state.input_cursor_text().len(), cursor_len);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 0);
     }
 
     #[test]

@@ -23,6 +23,7 @@ use super::{
 
 const REDRAW_INTERVAL_MS: u64 = 33;
 const MAX_DRAINED_INPUT_EVENTS_PER_LOOP: usize = 64;
+const ACTIVE_TURN_ARROW_SCROLL_LINES: u16 = 1;
 
 struct UiRuntime {
     renderer: UiRenderer,
@@ -268,11 +269,20 @@ fn handle_input_during_active_turn(
             }
 
             let ui_action = ui_action::adapter::to_ui_action(event);
-            if matches!(
-                &ui_action,
-                UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
-            ) {
-                let _ = state.handle_ui_action(ui_action);
+            let allowed_action = match ui_action {
+                UiAction::ScrollUp { lines } => Some(UiAction::ScrollUp { lines }),
+                UiAction::ScrollDown { lines } => Some(UiAction::ScrollDown { lines }),
+                UiAction::MoveCursorUp => Some(UiAction::ScrollUp {
+                    lines: ACTIVE_TURN_ARROW_SCROLL_LINES,
+                }),
+                UiAction::MoveCursorDown => Some(UiAction::ScrollDown {
+                    lines: ACTIVE_TURN_ARROW_SCROLL_LINES,
+                }),
+                UiAction::ViewportChanged => Some(UiAction::ViewportChanged),
+                _ => None,
+            };
+            if let Some(action) = allowed_action {
+                let _ = state.handle_ui_action(action);
             }
             false
         }
@@ -383,6 +393,8 @@ mod tests {
         let _ = state.take_dirty();
         let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
         assert_eq!(state.output_scroll_lines_from_bottom(), 8);
+        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::Up))));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 9);
         assert!(state.take_dirty());
 
         let _ = handle_input_during_active_turn(
