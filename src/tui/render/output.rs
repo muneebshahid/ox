@@ -1,5 +1,5 @@
 use super::{RenderMeta, viewport};
-use crate::tui::state::TuiState;
+use crate::tui::state::{OutputViewport, TuiState};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -97,6 +97,13 @@ pub(super) fn draw_output(
     output: &OutputView,
     area: Rect,
 ) {
+    state.set_output_viewport(OutputViewport {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    });
+
     let max_scroll = viewport::max_scroll_offset(&output.plain_lines, area.width, area.height);
     state.clamp_output_scroll_lines_from_bottom(max_scroll);
     let scroll = viewport::scroll_offset(
@@ -109,6 +116,56 @@ pub(super) fn draw_output(
         .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(output, area);
+
+    highlight_output_selection(frame, state, area);
+    state.set_output_cells(capture_output_cells(frame, area));
+}
+
+fn highlight_output_selection(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
+    let Some((start, end)) = state.output_selection_range() else {
+        return;
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let start_row = start.row.min(area.height - 1);
+    let end_row = end.row.min(area.height - 1);
+    let start_col = start.col.min(area.width - 1);
+    let end_col = end.col.min(area.width - 1);
+    let (first_row, first_col, last_row, last_col) = if (end_row, end_col) < (start_row, start_col)
+    {
+        (end_row, end_col, start_row, start_col)
+    } else {
+        (start_row, start_col, end_row, end_col)
+    };
+
+    let buf = frame.buffer_mut();
+    for row in first_row..=last_row {
+        let from_col = if row == first_row { first_col } else { 0 };
+        let to_col = if row == last_row {
+            last_col
+        } else {
+            area.width - 1
+        };
+        for col in from_col..=to_col {
+            let cell = &mut buf[(area.x + col, area.y + row)];
+            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+        }
+    }
+}
+
+fn capture_output_cells(frame: &mut Frame<'_>, area: Rect) -> Vec<Vec<String>> {
+    let mut cells = Vec::with_capacity(area.height as usize);
+    let buf = frame.buffer_mut();
+    for row in 0..area.height {
+        let mut rendered_row = Vec::with_capacity(area.width as usize);
+        for col in 0..area.width {
+            rendered_row.push(buf[(area.x + col, area.y + row)].symbol().to_string());
+        }
+        cells.push(rendered_row);
+    }
+    cells
 }
 
 /// Builds the fixed banner lines shown at the top of the output area.
