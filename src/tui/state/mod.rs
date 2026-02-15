@@ -189,6 +189,18 @@ impl TuiState {
                 }
                 StateCommand::None
             }
+            UiAction::MoveCursorWordLeft => {
+                if self.input.move_word_left() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::MoveCursorWordRight => {
+                if self.input.move_word_right() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
             UiAction::MoveCursorHome => {
                 if self.input.move_home() {
                     self.mark_dirty();
@@ -197,6 +209,12 @@ impl TuiState {
             }
             UiAction::MoveCursorEnd => {
                 if self.input.move_end() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::DeleteWordLeft => {
+                if self.input.delete_word_left() {
                     self.mark_dirty();
                 }
                 StateCommand::None
@@ -559,6 +577,24 @@ mod tests {
         state.handle_ui_action(UiAction::DeleteToEnd);
         assert_eq!(state.input(), "hel");
         assert_eq!(state.input_cursor_text(), "hel");
+    }
+
+    #[test]
+    fn word_navigation_and_word_delete_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello   world test".to_string()));
+        assert_eq!(state.input_cursor_text(), "hello   world test");
+
+        state.handle_ui_action(UiAction::MoveCursorWordLeft);
+        assert_eq!(state.input_cursor_text(), "hello   world ");
+        state.handle_ui_action(UiAction::MoveCursorWordLeft);
+        assert_eq!(state.input_cursor_text(), "hello   ");
+        state.handle_ui_action(UiAction::MoveCursorWordRight);
+        assert_eq!(state.input_cursor_text(), "hello   world");
+
+        state.handle_ui_action(UiAction::DeleteWordLeft);
+        assert_eq!(state.input(), "hello    test");
+        assert_eq!(state.input_cursor_text(), "hello   ");
     }
 
     #[test]

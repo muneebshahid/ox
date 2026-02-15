@@ -90,6 +90,34 @@ impl InputState {
         true
     }
 
+    pub(super) fn move_word_left(&mut self) -> bool {
+        let target = prev_word_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
+            return false;
+        }
+        self.cursor_byte = target;
+        true
+    }
+
+    pub(super) fn move_word_right(&mut self) -> bool {
+        let target = next_word_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
+            return false;
+        }
+        self.cursor_byte = target;
+        true
+    }
+
+    pub(super) fn delete_word_left(&mut self) -> bool {
+        let target = prev_word_boundary(&self.text, self.cursor_byte);
+        if target == self.cursor_byte {
+            return false;
+        }
+        self.text.replace_range(target..self.cursor_byte, "");
+        self.cursor_byte = target;
+        true
+    }
+
     pub(super) const fn move_home(&mut self) -> bool {
         if self.cursor_byte == 0 {
             return false;
@@ -124,6 +152,101 @@ fn next_char_boundary(value: &str, at: usize) -> Option<usize> {
         .chars()
         .next()
         .map(|ch| at.saturating_add(ch.len_utf8()))
+}
+
+fn prev_word_boundary(value: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(value.len());
+    if cursor == 0 {
+        return 0;
+    }
+
+    while let Some((idx, ch)) = prev_char(value, cursor) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        cursor = idx;
+    }
+
+    if let Some((idx, ch)) = prev_char(value, cursor) {
+        let class = char_class(ch);
+        while let Some((prev_idx, prev_ch)) = prev_char(value, cursor) {
+            if char_class(prev_ch) != class {
+                break;
+            }
+            cursor = prev_idx;
+        }
+        return idx.min(cursor);
+    }
+
+    cursor
+}
+
+fn next_word_boundary(value: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(value.len());
+    if cursor == value.len() {
+        return cursor;
+    }
+
+    while let Some((_, ch)) = next_char(value, cursor) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        cursor = next_char_boundary(value, cursor).unwrap_or(value.len());
+        if cursor >= value.len() {
+            return value.len();
+        }
+    }
+
+    if let Some((_, ch)) = next_char(value, cursor) {
+        let class = char_class(ch);
+        while let Some((_, next_ch)) = next_char(value, cursor) {
+            if char_class(next_ch) != class {
+                break;
+            }
+            cursor = next_char_boundary(value, cursor).unwrap_or(value.len());
+            if cursor >= value.len() {
+                break;
+            }
+        }
+    }
+
+    cursor
+}
+
+fn prev_char(value: &str, at: usize) -> Option<(usize, char)> {
+    if at == 0 {
+        return None;
+    }
+
+    value[..at].char_indices().last()
+}
+
+fn next_char(value: &str, at: usize) -> Option<(usize, char)> {
+    if at >= value.len() {
+        return None;
+    }
+
+    value[at..]
+        .char_indices()
+        .next()
+        .map(|(idx, ch)| (at + idx, ch))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Whitespace,
+    Word,
+    Symbol,
+}
+
+fn char_class(ch: char) -> CharClass {
+    if ch.is_whitespace() {
+        return CharClass::Whitespace;
+    }
+    if ch.is_alphanumeric() || ch == '_' {
+        return CharClass::Word;
+    }
+    CharClass::Symbol
 }
 
 #[cfg(test)]
@@ -300,5 +423,48 @@ mod tests {
         assert_eq!(input.text(), "hel");
         assert_eq!(input.cursor_text(), "hel");
         assert!(!input.delete_to_end());
+    }
+
+    #[test]
+    fn move_word_left_and_right_jump_by_word_boundaries() {
+        let mut input = InputState::new();
+        input.paste("hello   world, test");
+        assert_eq!(input.cursor_text(), "hello   world, test");
+
+        assert!(input.move_word_left());
+        assert_eq!(input.cursor_text(), "hello   world, ");
+        assert!(input.move_word_left());
+        assert_eq!(input.cursor_text(), "hello   world");
+        assert!(input.move_word_left());
+        assert_eq!(input.cursor_text(), "hello   ");
+        assert!(input.move_word_left());
+        assert_eq!(input.cursor_text(), "");
+        assert!(!input.move_word_left());
+
+        assert!(input.move_word_right());
+        assert_eq!(input.cursor_text(), "hello");
+        assert!(input.move_word_right());
+        assert_eq!(input.cursor_text(), "hello   world");
+        assert!(input.move_word_right());
+        assert_eq!(input.cursor_text(), "hello   world,");
+        assert!(input.move_word_right());
+        assert_eq!(input.cursor_text(), "hello   world, test");
+        assert!(!input.move_word_right());
+    }
+
+    #[test]
+    fn delete_word_left_removes_previous_word_chunk() {
+        let mut input = InputState::new();
+        input.paste("hello   world test");
+        assert!(input.delete_word_left());
+        assert_eq!(input.text(), "hello   world ");
+        assert_eq!(input.cursor_text(), "hello   world ");
+        assert!(input.delete_word_left());
+        assert_eq!(input.text(), "hello   ");
+        assert_eq!(input.cursor_text(), "hello   ");
+        assert!(input.delete_word_left());
+        assert_eq!(input.text(), "");
+        assert_eq!(input.cursor_text(), "");
+        assert!(!input.delete_word_left());
     }
 }

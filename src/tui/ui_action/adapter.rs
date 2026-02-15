@@ -24,14 +24,22 @@ pub(in crate::tui) const fn is_quit_event(event: &CEvent) -> bool {
 
 fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     if is_quit_key(&key) {
-        return UiAction::Quit;
+        let action = UiAction::Quit;
+        debug_log_key_mapping(&key, &action);
+        return action;
     }
 
     if let Some(shortcut_action) = cursor_and_delete_shortcut(key) {
+        debug_log_key_mapping(&key, &shortcut_action);
         return shortcut_action;
     }
 
-    match key.code {
+    if let Some(word_action) = option_word_shortcut(key) {
+        debug_log_key_mapping(&key, &word_action);
+        return word_action;
+    }
+
+    let action = match key.code {
         KeyCode::Enter => UiAction::Submit,
         KeyCode::Backspace => UiAction::Backspace,
         KeyCode::Delete => UiAction::Delete,
@@ -59,7 +67,9 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
             UiAction::Insert(c)
         }
         _ => UiAction::Ignore,
-    }
+    };
+    debug_log_key_mapping(&key, &action);
+    action
 }
 
 const fn cursor_and_delete_shortcut(key: KeyEvent) -> Option<UiAction> {
@@ -74,6 +84,50 @@ const fn cursor_and_delete_shortcut(key: KeyEvent) -> Option<UiAction> {
         KeyCode::Char('k' | 'K') => Some(UiAction::DeleteToEnd),
         _ => None,
     }
+}
+
+const fn option_word_shortcut(key: KeyEvent) -> Option<UiAction> {
+    if !key.modifiers.contains(KeyModifiers::ALT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+
+    // Terminal variance:
+    // - Some terminals send Alt+Left/Alt+Right directly.
+    // - Others (notably macOS Option-word shortcuts) send Alt+B / Alt+F.
+    // We support both so Option word navigation works consistently.
+    match key.code {
+        // Many terminals emit Option+Left/Right as Alt+B / Alt+F.
+        KeyCode::Left | KeyCode::Char('b' | 'B') => Some(UiAction::MoveCursorWordLeft),
+        KeyCode::Right | KeyCode::Char('f' | 'F') => Some(UiAction::MoveCursorWordRight),
+        KeyCode::Backspace => Some(UiAction::DeleteWordLeft),
+        _ => None,
+    }
+}
+
+fn debug_log_key_mapping(key: &KeyEvent, action: &UiAction) {
+    if std::env::var_os("OX_DEBUG_KEYS").is_none() {
+        return;
+    }
+
+    // Debug logs intentionally go to a file instead of stderr to avoid corrupting
+    // the active terminal UI. Override path with OX_DEBUG_KEYS_FILE.
+    let path =
+        std::env::var("OX_DEBUG_KEYS_FILE").unwrap_or_else(|_| "/tmp/ox-debug-keys.log".to_string());
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+
+    let _ = std::io::Write::write_fmt(
+        &mut file,
+        format_args!(
+            "[ox-keys] code={:?} modifiers={:?} kind={:?} state={:?} -> {:?}\n",
+            key.code, key.modifiers, key.kind, key.state, action
+        ),
+    );
 }
 
 const fn to_ui_action_from_mouse(mouse: MouseEvent) -> UiAction {
@@ -164,6 +218,45 @@ mod tests {
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::PageDown))),
             UiAction::ScrollDown { lines: 8 }
+        );
+    }
+
+    #[test]
+    fn maps_option_word_navigation_and_delete_shortcuts() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Left,
+                KeyModifiers::ALT
+            ))),
+            UiAction::MoveCursorWordLeft
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Right,
+                KeyModifiers::ALT
+            ))),
+            UiAction::MoveCursorWordRight
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Backspace,
+                KeyModifiers::ALT
+            ))),
+            UiAction::DeleteWordLeft
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('b'),
+                KeyModifiers::ALT
+            ))),
+            UiAction::MoveCursorWordLeft
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('f'),
+                KeyModifiers::ALT
+            ))),
+            UiAction::MoveCursorWordRight
         );
     }
 
