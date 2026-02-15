@@ -85,7 +85,10 @@ fn execute_with_program(args: &GrepArgs, program: &str) -> Result<String, String
         }
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            return Err(format!("Error: ripgrep (rg) exited with status {}", output.status));
+            return Err(format!(
+                "Error: ripgrep (rg) exited with status {}",
+                output.status
+            ));
         }
         return Err(format!("Error: {stderr}"));
     }
@@ -269,9 +272,11 @@ mod tests {
 
         let result = execute_with_program(&args, "ox_missing_rg_binary_for_test");
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .unwrap()
-            .contains("ripgrep (rg) is required but was not found in PATH"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("ripgrep (rg) is required but was not found in PATH")
+        );
     }
 }
