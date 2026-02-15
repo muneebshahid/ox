@@ -11,10 +11,24 @@ use ratatui::{
 const LOGO_COL_WIDTH: usize = 18;
 const BANNER_LEFT_PADDING: usize = 2;
 const BANNER_TOP_PADDING_ROWS: usize = 1;
+const OUTPUT_FIXED_ROWS: u16 = 0;
 
 pub(super) struct OutputView {
     pub(super) text: Text<'static>,
     pub(super) plain_lines: Vec<String>,
+}
+
+/// Computes output pane height from wrapped output content.
+///
+/// Inputs:
+/// - `lines`: plain output lines used for wrap/height math.
+/// - `width`: output viewport width in cells.
+/// - `max_height`: maximum rows available for the output pane.
+///
+/// Output:
+/// - Output area height in terminal rows.
+pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 {
+    viewport::row_height(lines, width, max_height, OUTPUT_FIXED_ROWS)
 }
 
 /// Builds the full output payload for this frame.
@@ -188,7 +202,7 @@ fn build_banner_lines(meta: &RenderMeta) -> (Vec<Line<'static>>, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{BANNER_TOP_PADDING_ROWS, build_output_view, draw_output, viewport};
+    use super::{BANNER_TOP_PADDING_ROWS, build_output_view, draw_output, height_rows, viewport};
     use crate::{
         events::types::CoreEvent,
         tui::{render::RenderMeta, state::TuiState, ui_action::UiAction},
@@ -265,5 +279,17 @@ mod tests {
             .expect("draw output");
 
         assert_eq!(state.output_scroll_lines_from_bottom(), expected_max);
+    }
+
+    #[test]
+    fn height_rows_respects_available_space() {
+        let lines = vec!["one".to_string(); 100];
+        assert_eq!(height_rows(&lines, 20, 6), 6);
+    }
+
+    #[test]
+    fn height_rows_can_be_zero_when_no_space_available() {
+        let lines = vec!["one".to_string(); 100];
+        assert_eq!(height_rows(&lines, 20, 0), 0);
     }
 }
