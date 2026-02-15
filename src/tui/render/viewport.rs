@@ -1,26 +1,26 @@
-/// Returns output pane height clamped to both content size and available space.
+/// Returns pane height from wrapped content plus fixed non-content rows.
 ///
 /// Inputs:
-/// - `lines`: plain output lines.
+/// - `lines`: plain content lines.
 /// - `width`: viewport width in cells used for wrapping.
-/// - `max_output_height`: maximum rows available after layout reservations.
+/// - `max_height`: maximum rows available for the pane.
+/// - `fixed_rows`: rows reserved inside the pane (for example borders).
 ///
 /// Behavior:
-/// - Computes wrapped visual line count for `lines`.
-/// - Caps that count at `max_output_height`.
-///
-/// Example:
-/// - `lines = ["abcdefgh", "ij"]`, `width = 4`, `max_output_height = 2`
-/// - Wrapped line count is `3` (`2 + 1`), so result is `min(3, 2) = 2`.
+/// - Computes wrapped content height for `lines`.
+/// - Clamps content to `max_height - fixed_rows`.
+/// - Adds `fixed_rows` back and clamps final height to `max_height`.
 ///
 /// Output:
-/// - Number of rows to allocate to output.
-pub(super) fn clamped_output_height(lines: &[String], width: u16, max_output_height: u16) -> u16 {
-    if max_output_height == 0 {
+/// - Total pane height in rows.
+pub(super) fn row_height(lines: &[String], width: u16, max_height: u16, fixed_rows: u16) -> u16 {
+    if max_height == 0 {
         return 0;
     }
 
-    count_wrapped_lines(lines, width).min(max_output_height)
+    let max_content_height = max_height.saturating_sub(fixed_rows);
+    let content_height = count_wrapped_lines(lines, width).min(max_content_height);
+    content_height.saturating_add(fixed_rows).min(max_height)
 }
 
 /// Computes the top-of-buffer scroll offset for the output paragraph.
@@ -135,7 +135,7 @@ fn wrapped_line_count(line: &str, width: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{clamped_output_height, max_scroll_offset, scroll_offset, wrapped_line_count};
+    use super::{max_scroll_offset, row_height, scroll_offset, wrapped_line_count};
 
     fn lines(values: &[&str]) -> Vec<String> {
         values.iter().map(|line| (*line).to_string()).collect()
@@ -157,21 +157,15 @@ mod tests {
     }
 
     #[test]
-    fn clamped_output_height_uses_total_wrapped_lines_when_it_fits() {
-        let source = lines(&["abc", "def"]);
-        assert_eq!(clamped_output_height(&source, 10, 10), 2);
+    fn row_height_adds_fixed_rows_after_clamping_content() {
+        let source = lines(&["abcdef"]);
+        assert_eq!(row_height(&source, 3, 4, 2), 4);
     }
 
     #[test]
-    fn clamped_output_height_clamps_to_available_space() {
-        let source = lines(&["abcdefgh", "ijklmnop"]);
-        assert_eq!(clamped_output_height(&source, 4, 3), 3);
-    }
-
-    #[test]
-    fn clamped_output_height_handles_zero_max_height() {
-        let source = lines(&["abc"]);
-        assert_eq!(clamped_output_height(&source, 10, 0), 0);
+    fn row_height_respects_zero_max_height() {
+        let source = lines(&["abcdef"]);
+        assert_eq!(row_height(&source, 3, 0, 2), 0);
     }
 
     #[test]

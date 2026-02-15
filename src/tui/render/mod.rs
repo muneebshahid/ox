@@ -14,7 +14,6 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-const INPUT_HEIGHT_ROWS: u16 = 3;
 const RUNNING_BADGE_TOGGLE_INTERVAL: Duration = Duration::from_millis(250);
 const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
@@ -76,12 +75,18 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     let output = build_output_view(state, meta);
     let show_status = status_visible(state);
     let status_height_rows = u16::from(show_status);
-    let output_height_rows = output_height_rows(&output.plain_lines, area, show_status);
+    let max_input_height_rows = area.height.saturating_sub(status_height_rows);
+    let input_height_rows = input::height_rows(state.input(), area.width, max_input_height_rows);
+    let max_output_height_rows = area
+        .height
+        .saturating_sub(input_height_rows.saturating_add(status_height_rows));
+    let output_height_rows =
+        output::height_rows(&output.plain_lines, area.width, max_output_height_rows);
 
     let [output_area, status_area, input_area, _rest] = Layout::vertical([
         Constraint::Length(output_height_rows),
         Constraint::Length(status_height_rows),
-        Constraint::Length(INPUT_HEIGHT_ROWS),
+        Constraint::Length(input_height_rows),
         Constraint::Min(0),
     ])
     .areas(area);
@@ -92,32 +97,6 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     }
     input::draw_input(frame, state, input_area);
     input::place_input_cursor(frame, state, input_area);
-}
-
-/// Computes how many rows to allocate to the output pane.
-///
-/// Inputs:
-/// - `lines`: plain output lines used for wrap/height math.
-/// - `area`: full frame area for this draw.
-/// - `show_status`: whether the status row will be rendered.
-///
-/// Behavior:
-/// - Reserves fixed space for input and optional status.
-/// - Uses viewport wrap math to cap output height to available rows.
-///
-/// Example:
-/// - If `area.height = 20`, input height is `3`, and `show_status = true`,
-///   reserved height is `4`, so max output height is `16`.
-/// - If wrapped output lines require `30` rows, returned output height is `16`.
-/// - If wrapped output lines require `8` rows, returned output height is `8`.
-///
-/// Output:
-/// - Output area height in terminal rows.
-fn output_height_rows(lines: &[String], area: Rect, show_status: bool) -> u16 {
-    let status_height = u16::from(show_status);
-    let reserved_height = INPUT_HEIGHT_ROWS.saturating_add(status_height);
-    let max_output_height = area.height.saturating_sub(reserved_height).max(1);
-    viewport::clamped_output_height(lines, area.width, max_output_height)
 }
 
 /// Draws the status row.
@@ -190,11 +169,8 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, output_height_rows, running_status_line, status_visible,
-    };
+    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line, status_visible};
     use crate::{events::types::CoreEvent, tui::state::TuiState};
-    use ratatui::layout::Rect;
     use std::time::Duration;
 
     #[test]
@@ -215,18 +191,6 @@ mod tests {
 
         assert_eq!(line.spans[1].style.fg, Some(OX_BADGE_O_COLOR));
         assert_eq!(line.spans[2].style.fg, Some(OX_BADGE_X_COLOR));
-    }
-
-    #[test]
-    fn output_height_rows_respects_reserved_rows_for_input_and_status() {
-        let lines = vec!["one".to_string(); 100];
-        let area = Rect::new(0, 0, 20, 10);
-
-        let with_status = output_height_rows(&lines, area, true);
-        let without_status = output_height_rows(&lines, area, false);
-
-        assert_eq!(with_status, 6);
-        assert_eq!(without_status, 7);
     }
 
     #[test]
