@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use super::ui_action::UiAction;
 use crate::events::types::CoreEvent;
 
+pub(super) mod input;
 mod tool_activity;
 
 const STATUS_IDLE: &str = "Idle";
