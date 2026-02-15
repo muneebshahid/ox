@@ -11,8 +11,6 @@ pub enum UiAction {
     MoveCursorWordRight,
     MoveCursorLineStart,
     MoveCursorLineEnd,
-    MoveCursorHome,
-    MoveCursorEnd,
     DeleteToLineStart,
     DeleteToLineEnd,
     DeleteWordLeft,

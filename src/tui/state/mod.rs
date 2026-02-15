@@ -169,8 +169,6 @@ impl TuiState {
                 self.finish_input_mutation(InputState::move_line_start)
             }
             UiAction::MoveCursorLineEnd => self.finish_input_mutation(InputState::move_line_end),
-            UiAction::MoveCursorHome => self.finish_input_mutation(InputState::move_home),
-            UiAction::MoveCursorEnd => self.finish_input_mutation(InputState::move_end),
             UiAction::DeleteWordLeft => self.finish_input_mutation(InputState::delete_word_left),
             UiAction::Paste(pasted) => {
                 self.input.paste(&pasted);
@@ -509,18 +507,18 @@ mod tests {
     }
 
     #[test]
-    fn home_end_and_delete_apply_at_cursor_position() {
+    fn line_home_end_and_delete_apply_at_cursor_position() {
         let mut state = TuiState::new();
         state.handle_ui_action(UiAction::Paste("hello".to_string()));
 
-        state.handle_ui_action(UiAction::MoveCursorHome);
+        state.handle_ui_action(UiAction::MoveCursorLineStart);
         assert_eq!(state.input_cursor_text(), "");
 
         state.handle_ui_action(UiAction::Delete);
         assert_eq!(state.input(), "ello");
         assert_eq!(state.input_cursor_text(), "");
 
-        state.handle_ui_action(UiAction::MoveCursorEnd);
+        state.handle_ui_action(UiAction::MoveCursorLineEnd);
         assert_eq!(state.input_cursor_text(), "ello");
     }
 

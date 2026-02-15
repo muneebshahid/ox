@@ -138,21 +138,6 @@ impl InputState {
         true
     }
 
-    pub(super) const fn move_home(&mut self) -> bool {
-        if self.cursor_byte == 0 {
-            return false;
-        }
-        self.cursor_byte = 0;
-        true
-    }
-
-    pub(super) const fn move_end(&mut self) -> bool {
-        if self.cursor_byte == self.text.len() {
-            return false;
-        }
-        self.cursor_byte = self.text.len();
-        true
-    }
 }
 
 fn prev_char_boundary(value: &str, at: usize) -> Option<usize> {
@@ -391,22 +376,6 @@ mod tests {
         assert_eq!(input.text(), "");
         assert_eq!(input.cursor_byte(), 0);
         assert_eq!(input.cursor_text(), "");
-    }
-
-    #[test]
-    fn move_home_and_end_clamp_to_boundaries() {
-        let mut input = InputState::new();
-        input.paste("hello");
-        input.move_left();
-        input.move_left();
-
-        assert!(input.move_home());
-        assert_eq!(input.cursor_text(), "");
-        assert!(!input.move_home());
-
-        assert!(input.move_end());
-        assert_eq!(input.cursor_text(), "hello");
-        assert!(!input.move_end());
     }
 
     #[test]

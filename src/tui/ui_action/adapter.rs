@@ -51,8 +51,8 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         KeyCode::Delete => UiAction::Delete,
         KeyCode::Left => UiAction::MoveCursorLeft,
         KeyCode::Right => UiAction::MoveCursorRight,
-        KeyCode::Home => UiAction::MoveCursorHome,
-        KeyCode::End => UiAction::MoveCursorEnd,
+        KeyCode::Home => UiAction::MoveCursorLineStart,
+        KeyCode::End => UiAction::MoveCursorLineEnd,
         KeyCode::Up => UiAction::ScrollUp {
             lines: KEY_SCROLL_LINES,
         },
@@ -203,11 +203,11 @@ mod tests {
     fn maps_arrows_to_scroll_and_cursor_inputs() {
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Home))),
-            UiAction::MoveCursorHome
+            UiAction::MoveCursorLineStart
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::End))),
-            UiAction::MoveCursorEnd
+            UiAction::MoveCursorLineEnd
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Left))),
