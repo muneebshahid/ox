@@ -18,6 +18,7 @@ const RUNNING_BADGE_TOGGLE_INTERVAL: Duration = Duration::from_millis(250);
 const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
 const OX_BADGE_X_COLOR: Color = Color::Cyan;
+const TRANSIENT_NOTICE_COLOR: Color = Color::LightGreen;
 
 pub struct RenderMeta {
     model: String,
@@ -122,9 +123,19 @@ fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
         Paragraph::new(running_status_line(
             state.running_elapsed(),
             &state.running_phase_label(),
+            state.transient_notice(),
         ))
-    } else {
+    } else if state.status() != "Idle" {
         Paragraph::new(state.status())
+    } else if let Some(notice) = state.transient_notice() {
+        Paragraph::new(Line::from(vec![Span::styled(
+            notice.to_string(),
+            Style::default()
+                .fg(TRANSIENT_NOTICE_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )]))
+    } else {
+        Paragraph::new("")
     };
     frame.render_widget(status, area);
 }
@@ -137,7 +148,7 @@ fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
 /// Output:
 /// - `true` when status is not `Idle`, otherwise `false`.
 fn status_visible(state: &TuiState) -> bool {
-    state.status() != "Idle"
+    state.status() != "Idle" || state.transient_notice().is_some()
 }
 
 /// Builds the animated running status line: `[OX] <phase> (<seconds>s)`.
@@ -151,7 +162,7 @@ fn status_visible(state: &TuiState) -> bool {
 ///
 /// Output:
 /// - Styled `Line` for the status row.
-fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
+fn running_status_line(elapsed: Duration, phase: &str, notice: Option<&str>) -> Line<'static> {
     let interval_ms = RUNNING_BADGE_TOGGLE_INTERVAL.as_millis().max(1);
     let highlight_o = (elapsed.as_millis() / interval_ms).is_multiple_of(2);
     let elapsed_seconds = elapsed.as_secs();
@@ -166,13 +177,23 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
         (plain(OX_BADGE_O_COLOR), bold(OX_BADGE_X_COLOR))
     };
 
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled("[", bracket_style),
         Span::styled("O", o_style),
         Span::styled("X", x_style),
         Span::styled("]", bracket_style),
         Span::raw(format!(" {phase} ({elapsed_seconds}s)")),
-    ])
+    ];
+    if let Some(notice_text) = notice {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            notice_text.to_string(),
+            Style::default()
+                .fg(TRANSIENT_NOTICE_COLOR)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -183,7 +204,7 @@ mod tests {
 
     #[test]
     fn running_status_line_keeps_expected_text() {
-        let line = running_status_line(Duration::from_secs(3), "Thinking");
+        let line = running_status_line(Duration::from_secs(3), "Thinking", None);
         let rendered: String = line
             .spans
             .iter()
@@ -195,7 +216,7 @@ mod tests {
 
     #[test]
     fn running_status_line_colors_ox_badge() {
-        let line = running_status_line(Duration::ZERO, "Thinking");
+        let line = running_status_line(Duration::ZERO, "Thinking", None);
 
         assert_eq!(line.spans[1].style.fg, Some(OX_BADGE_O_COLOR));
         assert_eq!(line.spans[2].style.fg, Some(OX_BADGE_X_COLOR));
@@ -210,6 +231,14 @@ mod tests {
         assert!(status_visible(&state));
 
         state.handle_agent_event(CoreEvent::Error("boom".to_string()));
+        assert!(status_visible(&state));
+    }
+
+    #[test]
+    fn status_visibility_is_true_for_transient_notice() {
+        let mut state = TuiState::new();
+        state.set_transient_notice("Copied to clipboard".to_string(), Duration::from_secs(1));
+
         assert!(status_visible(&state));
     }
 }

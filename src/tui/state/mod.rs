@@ -47,6 +47,12 @@ struct OutputSelection {
     pending_copy: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TransientNotice {
+    text: String,
+    until: Instant,
+}
+
 pub struct TuiState {
     transcript: String,
     status: String,
@@ -56,6 +62,7 @@ pub struct TuiState {
     output_viewport: Option<OutputViewport>,
     output_cells: Vec<Vec<String>>,
     output_selection: Option<OutputSelection>,
+    transient_notice: Option<TransientNotice>,
     dirty: bool,
     running_started_at: Option<Instant>,
     run_phase: RunPhase,
@@ -73,6 +80,7 @@ impl TuiState {
             output_viewport: None,
             output_cells: Vec::new(),
             output_selection: None,
+            transient_notice: None,
             dirty: true,
             running_started_at: None,
             run_phase: RunPhase::Thinking,
@@ -139,6 +147,39 @@ impl TuiState {
             ..selection
         });
         Some(text)
+    }
+
+    pub(in crate::tui) fn set_transient_notice(&mut self, text: String, duration: Duration) {
+        if text.is_empty() {
+            return;
+        }
+
+        self.transient_notice = Some(TransientNotice {
+            text,
+            until: Instant::now() + duration,
+        });
+        self.mark_dirty();
+    }
+
+    pub(in crate::tui) fn transient_notice(&self) -> Option<&str> {
+        self.transient_notice
+            .as_ref()
+            .map(|notice| notice.text.as_str())
+    }
+
+    pub(in crate::tui) const fn has_transient_notice(&self) -> bool {
+        self.transient_notice.is_some()
+    }
+
+    pub(in crate::tui) fn clear_expired_transient_notice(&mut self, now: Instant) {
+        let Some(notice) = self.transient_notice.as_ref() else {
+            return;
+        };
+        if now < notice.until {
+            return;
+        }
+        self.transient_notice = None;
+        self.mark_dirty();
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
@@ -560,6 +601,7 @@ mod tests {
     use super::{OutputViewport, StateCommand, TuiState, truncate_preview};
     use crate::events::types::CoreEvent;
     use crate::tui::ui_action::UiAction;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn appends_deltas_and_updates_status() {
@@ -807,6 +849,24 @@ mod tests {
         state.handle_ui_action(UiAction::OutputSelectEnd { col: 2, row: 1 });
 
         assert_eq!(state.take_pending_copy_text(), None);
+    }
+
+    #[test]
+    fn transient_notice_expires_after_deadline() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+
+        state.set_transient_notice("Copied to clipboard".to_string(), Duration::from_secs(5));
+        assert_eq!(state.transient_notice(), Some("Copied to clipboard"));
+        assert!(state.has_transient_notice());
+        assert!(state.take_dirty());
+
+        state.clear_expired_transient_notice(Instant::now());
+        assert_eq!(state.transient_notice(), Some("Copied to clipboard"));
+
+        state.clear_expired_transient_notice(Instant::now() + Duration::from_secs(6));
+        assert_eq!(state.transient_notice(), None);
+        assert!(!state.has_transient_notice());
     }
 
     #[test]
