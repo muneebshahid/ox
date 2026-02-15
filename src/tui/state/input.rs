@@ -13,6 +13,7 @@ impl InputState {
         &self.text
     }
 
+    #[cfg(test)]
     pub(super) const fn cursor_byte(&self) -> usize {
         self.cursor_byte
     }
@@ -48,6 +49,14 @@ impl InputState {
         true
     }
 
+    pub(super) fn delete_forward(&mut self) -> bool {
+        let Some(next) = next_char_boundary(&self.text, self.cursor_byte) else {
+            return false;
+        };
+        self.text.replace_range(self.cursor_byte..next, "");
+        true
+    }
+
     pub(super) fn move_left(&mut self) -> bool {
         let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte) else {
             return false;
@@ -61,6 +70,22 @@ impl InputState {
             return false;
         };
         self.cursor_byte = next;
+        true
+    }
+
+    pub(super) const fn move_home(&mut self) -> bool {
+        if self.cursor_byte == 0 {
+            return false;
+        }
+        self.cursor_byte = 0;
+        true
+    }
+
+    pub(super) const fn move_end(&mut self) -> bool {
+        if self.cursor_byte == self.text.len() {
+            return false;
+        }
+        self.cursor_byte = self.text.len();
         true
     }
 }
@@ -194,5 +219,43 @@ mod tests {
         assert_eq!(input.text(), "");
         assert_eq!(input.cursor_byte(), 0);
         assert_eq!(input.cursor_text(), "");
+    }
+
+    #[test]
+    fn move_home_and_end_clamp_to_boundaries() {
+        let mut input = InputState::new();
+        input.paste("hello");
+        input.move_left();
+        input.move_left();
+
+        assert!(input.move_home());
+        assert_eq!(input.cursor_text(), "");
+        assert!(!input.move_home());
+
+        assert!(input.move_end());
+        assert_eq!(input.cursor_text(), "hello");
+        assert!(!input.move_end());
+    }
+
+    #[test]
+    fn delete_forward_removes_character_at_cursor() {
+        let mut input = InputState::new();
+        input.paste("abdc");
+        input.move_left();
+        input.move_left();
+
+        assert!(input.delete_forward());
+        assert_eq!(input.text(), "abc");
+        assert_eq!(input.cursor_text(), "ab");
+    }
+
+    #[test]
+    fn delete_forward_at_end_is_noop() {
+        let mut input = InputState::new();
+        input.paste("abc");
+
+        assert!(!input.delete_forward());
+        assert_eq!(input.text(), "abc");
+        assert_eq!(input.cursor_text(), "abc");
     }
 }

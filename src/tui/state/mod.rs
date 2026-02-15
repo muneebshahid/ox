@@ -154,23 +154,46 @@ impl TuiState {
                 StateCommand::None
             }
             UiAction::Backspace => {
-                self.input.backspace();
-                self.mark_dirty();
+                if self.input.backspace() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::Delete => {
+                if self.input.delete_forward() {
+                    self.mark_dirty();
+                }
                 StateCommand::None
             }
             UiAction::MoveCursorLeft => {
-                self.input.move_left();
-                self.mark_dirty();
+                if self.input.move_left() {
+                    self.mark_dirty();
+                }
                 StateCommand::None
             }
             UiAction::MoveCursorRight => {
-                self.input.move_right();
-                self.mark_dirty();
+                if self.input.move_right() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::MoveCursorHome => {
+                if self.input.move_home() {
+                    self.mark_dirty();
+                }
+                StateCommand::None
+            }
+            UiAction::MoveCursorEnd => {
+                if self.input.move_end() {
+                    self.mark_dirty();
+                }
                 StateCommand::None
             }
             UiAction::Paste(pasted) => {
                 self.input.paste(&pasted);
-                self.mark_dirty();
+                if !pasted.is_empty() {
+                    self.mark_dirty();
+                }
                 StateCommand::None
             }
             UiAction::ScrollUp { lines } => {
@@ -488,6 +511,22 @@ mod tests {
         state.handle_ui_action(UiAction::Backspace);
         assert_eq!(state.input(), "ac");
         assert_eq!(state.input_cursor_text(), "a");
+    }
+
+    #[test]
+    fn home_end_and_delete_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+
+        state.handle_ui_action(UiAction::MoveCursorHome);
+        assert_eq!(state.input_cursor_text(), "");
+
+        state.handle_ui_action(UiAction::Delete);
+        assert_eq!(state.input(), "ello");
+        assert_eq!(state.input_cursor_text(), "");
+
+        state.handle_ui_action(UiAction::MoveCursorEnd);
+        assert_eq!(state.input_cursor_text(), "ello");
     }
 
     #[test]

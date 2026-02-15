@@ -27,11 +27,18 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         return UiAction::Quit;
     }
 
+    if let Some(shortcut_action) = home_end_shortcut(key) {
+        return shortcut_action;
+    }
+
     match key.code {
         KeyCode::Enter => UiAction::Submit,
         KeyCode::Backspace => UiAction::Backspace,
+        KeyCode::Delete => UiAction::Delete,
         KeyCode::Left => UiAction::MoveCursorLeft,
         KeyCode::Right => UiAction::MoveCursorRight,
+        KeyCode::Home => UiAction::MoveCursorHome,
+        KeyCode::End => UiAction::MoveCursorEnd,
         KeyCode::Up => UiAction::ScrollUp {
             lines: KEY_SCROLL_LINES,
         },
@@ -52,6 +59,18 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
             UiAction::Insert(c)
         }
         _ => UiAction::Ignore,
+    }
+}
+
+const fn home_end_shortcut(key: KeyEvent) -> Option<UiAction> {
+    if !key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+        return None;
+    }
+
+    match key.code {
+        KeyCode::Char('a' | 'A') => Some(UiAction::MoveCursorHome),
+        KeyCode::Char('e' | 'E') => Some(UiAction::MoveCursorEnd),
+        _ => None,
     }
 }
 
@@ -112,6 +131,14 @@ mod tests {
 
     #[test]
     fn maps_arrows_to_scroll_and_cursor_inputs() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Home))),
+            UiAction::MoveCursorHome
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::End))),
+            UiAction::MoveCursorEnd
+        );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Left))),
             UiAction::MoveCursorLeft
@@ -196,24 +223,46 @@ mod tests {
             UiAction::Backspace
         );
         assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Delete))),
+            UiAction::Delete
+        );
+        assert_eq!(
             to_ui_action(CEvent::Paste("hello".to_string())),
             UiAction::Paste("hello".to_string())
         );
     }
 
     #[test]
-    fn ignores_modified_char_input() {
+    fn maps_ctrl_a_and_ctrl_e_to_home_and_end() {
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('a'),
                 KeyModifiers::CONTROL
             ))),
-            UiAction::Ignore
+            UiAction::MoveCursorHome
         );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('e'),
+                KeyModifiers::CONTROL
+            ))),
+            UiAction::MoveCursorEnd
+        );
+    }
+
+    #[test]
+    fn ignores_other_modified_char_input() {
         assert_eq!(
             to_ui_action(CEvent::Key(key_with_modifiers(
                 KeyCode::Char('a'),
                 KeyModifiers::ALT
+            ))),
+            UiAction::Ignore
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key_with_modifiers(
+                KeyCode::Char('z'),
+                KeyModifiers::CONTROL
             ))),
             UiAction::Ignore
         );
