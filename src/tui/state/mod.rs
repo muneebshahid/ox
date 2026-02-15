@@ -29,6 +29,7 @@ pub struct TuiState {
     transcript: String,
     status: String,
     input: InputState,
+    input_inner_width: u16,
     output_scroll_lines_from_bottom: u16,
     dirty: bool,
     running_started_at: Option<Instant>,
@@ -42,6 +43,7 @@ impl TuiState {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
             input: InputState::new(),
+            input_inner_width: 0,
             output_scroll_lines_from_bottom: 0,
             dirty: true,
             running_started_at: None,
@@ -64,6 +66,10 @@ impl TuiState {
 
     pub(in crate::tui) fn input_cursor_text(&self) -> &str {
         self.input.cursor_text()
+    }
+
+    pub(in crate::tui) const fn set_input_inner_width(&mut self, width: u16) {
+        self.input_inner_width = width;
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
@@ -161,6 +167,14 @@ impl TuiState {
             UiAction::DeleteToLineEnd => self.finish_input_mutation(InputState::delete_to_line_end),
             UiAction::MoveCursorLeft => self.finish_input_mutation(InputState::move_left),
             UiAction::MoveCursorRight => self.finish_input_mutation(InputState::move_right),
+            UiAction::MoveCursorUp => {
+                let width = self.input_inner_width;
+                self.finish_input_mutation(|input| input.move_up(width))
+            }
+            UiAction::MoveCursorDown => {
+                let width = self.input_inner_width;
+                self.finish_input_mutation(|input| input.move_down(width))
+            }
             UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputState::move_word_left),
             UiAction::MoveCursorWordRight => {
                 self.finish_input_mutation(InputState::move_word_right)
@@ -490,6 +504,21 @@ mod tests {
             state.handle_ui_action(UiAction::MoveCursorRight);
         }
         assert_eq!(state.input_cursor_text(), "hello");
+    }
+
+    #[test]
+    fn cursor_moves_up_and_down_across_wrapped_input_rows() {
+        let mut state = TuiState::new();
+        state.set_input_inner_width(5);
+        state.handle_ui_action(UiAction::Paste("abcdefghij".to_string()));
+        let end_len = state.input_cursor_text().len();
+
+        state.handle_ui_action(UiAction::MoveCursorUp);
+        let mid_len = state.input_cursor_text().len();
+        assert!(mid_len < end_len);
+
+        state.handle_ui_action(UiAction::MoveCursorDown);
+        assert_eq!(state.input_cursor_text().len(), end_len);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use crate::tui::input_layout::{self, CursorPosition};
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct InputState {
     text: String,
@@ -110,6 +112,14 @@ impl InputState {
         true
     }
 
+    pub(super) fn move_up(&mut self, width: u16) -> bool {
+        self.move_vertical(width, VerticalDirection::Up)
+    }
+
+    pub(super) fn move_down(&mut self, width: u16) -> bool {
+        self.move_vertical(width, VerticalDirection::Down)
+    }
+
     pub(super) fn move_line_start(&mut self) -> bool {
         let target = line_start_boundary(&self.text, self.cursor_byte);
         if target == self.cursor_byte {
@@ -138,6 +148,72 @@ impl InputState {
         true
     }
 
+    fn move_vertical(&mut self, width: u16, direction: VerticalDirection) -> bool {
+        if width == 0 {
+            return false;
+        }
+
+        let positions = input_layout::cursor_positions_with_prompt(&self.text, width);
+        let Some(current) = positions.iter().find(|pos| pos.byte == self.cursor_byte).copied()
+        else {
+            return false;
+        };
+
+        let target_row = match direction {
+            VerticalDirection::Up => {
+                if current.row == 0 {
+                    return false;
+                }
+                current.row - 1
+            }
+            VerticalDirection::Down => current.row.saturating_add(1),
+        };
+
+        let Some(target) = closest_position_on_row(&positions, target_row, current.col) else {
+            return false;
+        };
+
+        if target.byte == self.cursor_byte {
+            return false;
+        }
+
+        self.cursor_byte = target.byte;
+        true
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VerticalDirection {
+    Up,
+    Down,
+}
+
+fn closest_position_on_row(
+    positions: &[CursorPosition],
+    row: u16,
+    preferred_col: u16,
+) -> Option<CursorPosition> {
+    let mut best_lte: Option<CursorPosition> = None;
+    let mut best_gt: Option<CursorPosition> = None;
+
+    for &position in positions {
+        if position.row != row {
+            continue;
+        }
+        if position.col <= preferred_col {
+            best_lte = match best_lte {
+                Some(existing) if existing.col >= position.col => Some(existing),
+                _ => Some(position),
+            };
+        } else {
+            best_gt = match best_gt {
+                Some(existing) if existing.col <= position.col => Some(existing),
+                _ => Some(position),
+            };
+        }
+    }
+
+    best_lte.or(best_gt)
 }
 
 fn prev_char_boundary(value: &str, at: usize) -> Option<usize> {
@@ -390,6 +466,29 @@ mod tests {
         assert!(input.move_line_end());
         assert_eq!(input.cursor_text(), "ab\ncd\nef");
         assert!(!input.move_line_end());
+    }
+
+    #[test]
+    fn move_up_and_down_follow_wrapped_rows_without_explicit_newlines() {
+        let mut input = InputState::new();
+        input.paste("abcdefghij");
+        let end = input.cursor_byte();
+
+        assert!(input.move_up(5));
+        let middle = input.cursor_byte();
+        assert!(middle < end);
+        assert!(input.move_down(5));
+        assert_eq!(input.cursor_byte(), end);
+    }
+
+    #[test]
+    fn move_up_and_down_are_noops_when_single_visual_row() {
+        let mut input = InputState::new();
+        input.paste("hello");
+
+        assert!(!input.move_up(40));
+        assert!(!input.move_down(40));
+        assert_eq!(input.cursor_text(), "hello");
     }
 
     #[test]

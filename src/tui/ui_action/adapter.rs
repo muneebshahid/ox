@@ -4,7 +4,6 @@ use crossterm::event::{
 
 use super::UiAction;
 
-const KEY_SCROLL_LINES: u16 = 1;
 const PAGE_SCROLL_LINES: u16 = 8;
 const MOUSE_SCROLL_LINES: u16 = 3;
 
@@ -51,14 +50,10 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
         KeyCode::Delete => UiAction::Delete,
         KeyCode::Left => UiAction::MoveCursorLeft,
         KeyCode::Right => UiAction::MoveCursorRight,
+        KeyCode::Up => UiAction::MoveCursorUp,
+        KeyCode::Down => UiAction::MoveCursorDown,
         KeyCode::Home => UiAction::MoveCursorLineStart,
         KeyCode::End => UiAction::MoveCursorLineEnd,
-        KeyCode::Up => UiAction::ScrollUp {
-            lines: KEY_SCROLL_LINES,
-        },
-        KeyCode::Down => UiAction::ScrollDown {
-            lines: KEY_SCROLL_LINES,
-        },
         KeyCode::PageUp => UiAction::ScrollUp {
             lines: PAGE_SCROLL_LINES,
         },
@@ -200,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_arrows_to_scroll_and_cursor_inputs() {
+    fn maps_arrows_page_and_cursor_inputs() {
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Home))),
             UiAction::MoveCursorLineStart
@@ -219,11 +214,11 @@ mod tests {
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Up))),
-            UiAction::ScrollUp { lines: 1 }
+            UiAction::MoveCursorUp
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Down))),
-            UiAction::ScrollDown { lines: 1 }
+            UiAction::MoveCursorDown
         );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::PageUp))),

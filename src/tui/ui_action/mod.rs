@@ -7,6 +7,8 @@ pub enum UiAction {
     Delete,
     MoveCursorLeft,
     MoveCursorRight,
+    MoveCursorUp,
+    MoveCursorDown,
     MoveCursorWordLeft,
     MoveCursorWordRight,
     MoveCursorLineStart,

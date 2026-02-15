@@ -381,8 +381,8 @@ mod tests {
     fn active_turn_only_allows_scroll_or_viewport_actions() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
-        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::Up))));
-        assert_eq!(state.output_scroll_lines_from_bottom(), 1);
+        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 8);
         assert!(state.take_dirty());
 
         let _ = handle_input_during_active_turn(

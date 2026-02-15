@@ -8,7 +8,7 @@ use super::state::TuiState;
 use output::{build_output_view, draw_output};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -95,6 +95,14 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     if show_status {
         draw_status(frame, state, status_area);
     }
+    state.set_input_inner_width(
+        input_area
+            .inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            })
+            .width,
+    );
     input::draw_input(frame, state, input_area);
     input::place_input_cursor(frame, state, input_area);
 }
