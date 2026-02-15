@@ -30,6 +30,8 @@ fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     match key.code {
         KeyCode::Enter => UiAction::Submit,
         KeyCode::Backspace => UiAction::Backspace,
+        KeyCode::Left => UiAction::MoveCursorLeft,
+        KeyCode::Right => UiAction::MoveCursorRight,
         KeyCode::Up => UiAction::ScrollUp {
             lines: KEY_SCROLL_LINES,
         },
@@ -109,7 +111,15 @@ mod tests {
     }
 
     #[test]
-    fn maps_arrow_and_page_keys_to_scroll_inputs() {
+    fn maps_arrows_to_scroll_and_cursor_inputs() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Left))),
+            UiAction::MoveCursorLeft
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Right))),
+            UiAction::MoveCursorRight
+        );
         assert_eq!(
             to_ui_action(CEvent::Key(key(KeyCode::Up))),
             UiAction::ScrollUp { lines: 1 }

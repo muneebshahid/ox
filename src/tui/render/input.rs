@@ -29,7 +29,7 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     frame.render_widget(input, area);
 }
 
-/// Places the terminal cursor at the visual end of the current input text.
+/// Places the terminal cursor at the visual input cursor position.
 ///
 /// Inputs:
 /// - `frame`: frame whose cursor position will be updated.
@@ -38,7 +38,7 @@ pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
 ///
 /// Behavior:
 /// - Converts outer widget area into inner writable area by removing borders.
-/// - Computes wrapped cursor `(col, row)` offset for `> {input}`.
+/// - Computes wrapped cursor `(col, row)` offset for `> {input[..cursor]}`.
 /// - Sets frame cursor position if inner area is non-empty.
 pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_area: Rect) {
     let input_inner = input_area.inner(Margin {
@@ -47,8 +47,11 @@ pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_
     });
 
     if input_inner.width > 0 && input_inner.height > 0 {
-        let (col, row) =
-            cursor_offset_with_prompt(state.input(), input_inner.width, input_inner.height);
+        let (col, row) = cursor_offset_with_prompt(
+            state.input_cursor_text(),
+            input_inner.width,
+            input_inner.height,
+        );
         frame.set_cursor_position((input_inner.x + col, input_inner.y + row));
     }
 }

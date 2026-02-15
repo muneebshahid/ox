@@ -62,6 +62,10 @@ impl TuiState {
         self.input.text()
     }
 
+    pub(in crate::tui) fn input_cursor_text(&self) -> &str {
+        self.input.cursor_text()
+    }
+
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
         self.output_scroll_lines_from_bottom
     }
@@ -151,6 +155,16 @@ impl TuiState {
             }
             UiAction::Backspace => {
                 self.input.backspace();
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::MoveCursorLeft => {
+                self.input.move_left();
+                self.mark_dirty();
+                StateCommand::None
+            }
+            UiAction::MoveCursorRight => {
+                self.input.move_right();
                 self.mark_dirty();
                 StateCommand::None
             }
@@ -436,6 +450,44 @@ mod tests {
 
         assert_eq!(command, StateCommand::Submit("hello".to_string()));
         assert_eq!(state.output_scroll_lines_from_bottom(), 0);
+    }
+
+    #[test]
+    fn cursor_moves_left_and_right_with_clamps() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+        assert_eq!(state.input_cursor_text(), "hello");
+
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        assert_eq!(state.input_cursor_text(), "hel");
+
+        state.handle_ui_action(UiAction::MoveCursorRight);
+        assert_eq!(state.input_cursor_text(), "hell");
+
+        for _ in 0..10 {
+            state.handle_ui_action(UiAction::MoveCursorLeft);
+        }
+        assert_eq!(state.input_cursor_text(), "");
+
+        for _ in 0..10 {
+            state.handle_ui_action(UiAction::MoveCursorRight);
+        }
+        assert_eq!(state.input_cursor_text(), "hello");
+    }
+
+    #[test]
+    fn insert_and_backspace_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("ac".to_string()));
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::Insert('b'));
+        assert_eq!(state.input(), "abc");
+        assert_eq!(state.input_cursor_text(), "ab");
+
+        state.handle_ui_action(UiAction::Backspace);
+        assert_eq!(state.input(), "ac");
+        assert_eq!(state.input_cursor_text(), "a");
     }
 
     #[test]
