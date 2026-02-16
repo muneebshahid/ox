@@ -78,7 +78,7 @@ impl RenderMeta {
 pub(super) fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) -> RenderSync {
     let area = frame.area();
     let output = build_output_view(state, meta);
-    let show_status = status_visible(state);
+    let show_status = state.status_row_visible();
     let status_height_rows = u16::from(show_status);
     let max_input_height_rows = area.height.saturating_sub(status_height_rows);
     let input_height_rows =
@@ -144,17 +144,6 @@ fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
     frame.render_widget(status, area);
 }
 
-/// Returns whether the status row should be visible.
-///
-/// Input:
-/// - `state`: current UI state.
-///
-/// Output:
-/// - `true` when status is not `Idle`, otherwise `false`.
-fn status_visible(state: &TuiState) -> bool {
-    state.status() != "Idle"
-}
-
 /// Builds the animated running status line: `[OX] <phase> (<seconds>s)`.
 ///
 /// Inputs:
@@ -192,7 +181,7 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line, status_visible};
+    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line};
     use crate::{events::types::CoreEvent, tui::state::TuiState};
     use std::time::Duration;
 
@@ -219,12 +208,12 @@ mod tests {
     #[test]
     fn status_visibility_tracks_non_idle_state() {
         let mut state = TuiState::new();
-        assert!(!status_visible(&state));
+        assert!(!state.status_row_visible());
 
         state.handle_agent_event(CoreEvent::AgentTurnStart);
-        assert!(status_visible(&state));
+        assert!(state.status_row_visible());
 
         state.handle_agent_event(CoreEvent::Error("boom".to_string()));
-        assert!(status_visible(&state));
+        assert!(state.status_row_visible());
     }
 }

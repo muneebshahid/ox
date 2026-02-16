@@ -31,6 +31,35 @@ impl InputBuffer {
         true
     }
 
+    fn set_cursor_target(&mut self, target: usize) -> bool {
+        self.set_cursor_byte_offset(target)
+    }
+
+    fn set_cursor_target_if_some(&mut self, target: Option<usize>) -> bool {
+        target.is_some_and(|byte| self.set_cursor_byte_offset(byte))
+    }
+
+    fn delete_range(&mut self, start: usize, end: usize) -> bool {
+        if start == end {
+            return false;
+        }
+        self.text.replace_range(start..end, "");
+        true
+    }
+
+    fn delete_range_and_set_cursor(
+        &mut self,
+        start: usize,
+        end: usize,
+        cursor_byte_offset: usize,
+    ) -> bool {
+        if !self.delete_range(start, end) {
+            return false;
+        }
+        self.cursor_byte_offset = cursor_byte_offset;
+        true
+    }
+
     pub(super) fn move_up(&mut self, width: u16) -> bool {
         self.move_vertical(width, input_cursor::VerticalDirection::Up)
     }
@@ -46,7 +75,7 @@ impl InputBuffer {
             width,
             direction,
         );
-        target.is_some_and(|byte| self.set_cursor_byte_offset(byte))
+        self.set_cursor_target_if_some(target)
     }
 
     pub(super) fn cursor_text(&self) -> &str {
@@ -75,98 +104,57 @@ impl InputBuffer {
         let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.text.replace_range(prev..self.cursor_byte_offset, "");
-        self.cursor_byte_offset = prev;
-        true
+        self.delete_range_and_set_cursor(prev, self.cursor_byte_offset, prev)
     }
 
     pub(super) fn delete_forward(&mut self) -> bool {
         let Some(next) = next_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.text.replace_range(self.cursor_byte_offset..next, "");
-        true
+        self.delete_range(self.cursor_byte_offset, next)
     }
 
     pub(super) fn delete_to_line_start(&mut self) -> bool {
         let target = line_start_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.text.replace_range(target..self.cursor_byte_offset, "");
-        self.cursor_byte_offset = target;
-        true
+        self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target)
     }
 
     pub(super) fn delete_to_line_end(&mut self) -> bool {
         let target = line_end_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.text.replace_range(self.cursor_byte_offset..target, "");
-        true
+        self.delete_range(self.cursor_byte_offset, target)
     }
 
     pub(super) fn move_left(&mut self) -> bool {
-        let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte_offset) else {
-            return false;
-        };
-        self.cursor_byte_offset = prev;
-        true
+        self.set_cursor_target_if_some(prev_char_boundary(&self.text, self.cursor_byte_offset))
     }
 
     pub(super) fn move_right(&mut self) -> bool {
-        let Some(next) = next_char_boundary(&self.text, self.cursor_byte_offset) else {
-            return false;
-        };
-        self.cursor_byte_offset = next;
-        true
+        self.set_cursor_target_if_some(next_char_boundary(&self.text, self.cursor_byte_offset))
     }
 
     pub(super) fn move_word_left(&mut self) -> bool {
         let target = prev_word_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.cursor_byte_offset = target;
-        true
+        self.set_cursor_target(target)
     }
 
     pub(super) fn move_word_right(&mut self) -> bool {
         let target = next_word_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.cursor_byte_offset = target;
-        true
+        self.set_cursor_target(target)
     }
 
     pub(super) fn move_line_start(&mut self) -> bool {
         let target = line_start_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.cursor_byte_offset = target;
-        true
+        self.set_cursor_target(target)
     }
 
     pub(super) fn move_line_end(&mut self) -> bool {
         let target = line_end_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.cursor_byte_offset = target;
-        true
+        self.set_cursor_target(target)
     }
 
     pub(super) fn delete_word_left(&mut self) -> bool {
         let target = prev_word_boundary(&self.text, self.cursor_byte_offset);
-        if target == self.cursor_byte_offset {
-            return false;
-        }
-        self.text.replace_range(target..self.cursor_byte_offset, "");
-        self.cursor_byte_offset = target;
-        true
+        self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target)
     }
 }
 

@@ -59,11 +59,12 @@ pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 
 ///   - `plain_lines`: unstyled lines for wrap/scroll computations.
 pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputView {
     let (mut lines, mut plain_lines) = build_banner_lines(meta);
+    let output_log = state.output_log();
 
-    if !state.output_log().is_empty() {
+    if !output_log.is_empty() {
         lines.push(Line::from(String::new()));
         plain_lines.push(String::new());
-        for line in state.output_log().split('\n') {
+        for line in output_log.split('\n') {
             lines.push(Line::from(line.to_string()));
             plain_lines.push(line.to_string());
         }

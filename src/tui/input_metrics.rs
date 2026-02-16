@@ -54,7 +54,7 @@ fn last_rendered_cell(input: &str, width: u16, height: u16) -> Option<(u16, u16)
     sentinel.set_symbol(CURSOR_SENTINEL_SYMBOL);
     let mut scratch = Buffer::filled(area, sentinel);
 
-    Paragraph::new(input.to_string())
+    Paragraph::new(input)
         .wrap(INPUT_WRAP)
         .render(area, &mut scratch);
 

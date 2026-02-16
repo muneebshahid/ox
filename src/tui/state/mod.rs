@@ -31,16 +31,53 @@ struct InputState {
     inner_width: u16,    // Rendered inner width used for wrapped vertical cursor moves.
 }
 
+impl InputState {
+    fn new() -> Self {
+        Self {
+            buffer: InputBuffer::new(),
+            inner_width: 0,
+        }
+    }
+}
+
 struct OutputState {
     log: String,                   // Append-only output log shown in the output pane.
     scroll_lines_from_bottom: u16, // Manual scroll distance measured from bottom.
     reasoning_trace_open: bool,    // Whether `[thinking]` trace is currently open.
 }
 
+impl OutputState {
+    const fn new() -> Self {
+        Self {
+            log: String::new(),
+            scroll_lines_from_bottom: 0,
+            reasoning_trace_open: false,
+        }
+    }
+}
+
 struct StatusState {
     text: String, // Status row text (for example `Idle`, `Running`, or error text).
     running_started_at: Option<Instant>, // Start time for current running status.
     run_phase: RunPhase, // Current running phase label shown in status.
+}
+
+impl StatusState {
+    fn new() -> Self {
+        Self {
+            text: STATUS_IDLE.to_string(),
+            running_started_at: None,
+            run_phase: RunPhase::Thinking,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.text == STATUS_RUNNING
+    }
+
+    fn is_visible(&self) -> bool {
+        self.text != STATUS_IDLE
+    }
 }
 
 pub struct TuiState {
@@ -53,20 +90,9 @@ pub struct TuiState {
 impl TuiState {
     pub fn new() -> Self {
         Self {
-            input: InputState {
-                buffer: InputBuffer::new(),
-                inner_width: 0,
-            },
-            output: OutputState {
-                log: String::new(),
-                scroll_lines_from_bottom: 0,
-                reasoning_trace_open: false,
-            },
-            status: StatusState {
-                text: STATUS_IDLE.to_string(),
-                running_started_at: None,
-                run_phase: RunPhase::Thinking,
-            },
+            input: InputState::new(),
+            output: OutputState::new(),
+            status: StatusState::new(),
             dirty: true,
         }
     }
@@ -104,7 +130,11 @@ impl TuiState {
     }
 
     pub fn status_is_running(&self) -> bool {
-        self.status.text == STATUS_RUNNING
+        self.status.is_running()
+    }
+
+    pub(in crate::tui) fn status_row_visible(&self) -> bool {
+        self.status.is_visible()
     }
 
     pub fn running_phase_label(&self) -> Cow<'_, str> {
@@ -237,26 +267,8 @@ impl TuiState {
     ) -> StateCommand {
         match action {
             UiAction::Quit => StateCommand::Quit,
-            UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged => {
-                self.handle_ui_action(action)
-            }
-            UiAction::Insert(_)
-            | UiAction::Backspace
-            | UiAction::Delete
-            | UiAction::MoveCursorLeft
-            | UiAction::MoveCursorRight
-            | UiAction::MoveCursorUp
-            | UiAction::MoveCursorDown
-            | UiAction::MoveCursorWordLeft
-            | UiAction::MoveCursorWordRight
-            | UiAction::MoveCursorLineStart
-            | UiAction::MoveCursorLineEnd
-            | UiAction::DeleteToLineStart
-            | UiAction::DeleteToLineEnd
-            | UiAction::DeleteWordLeft
-            | UiAction::Submit
-            | UiAction::Paste(_)
-            | UiAction::Ignore => StateCommand::None,
+            _ if is_active_turn_action_allowed(&action) => self.handle_ui_action(action),
+            _ => StateCommand::None,
         }
     }
 
@@ -374,6 +386,32 @@ impl TuiState {
 
     const fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+}
+
+const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
+    // Keep this exhaustive so newly added UiAction variants force an explicit
+    // active-turn policy decision.
+    match action {
+        UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged => true,
+        UiAction::Quit
+        | UiAction::Insert(_)
+        | UiAction::Backspace
+        | UiAction::Delete
+        | UiAction::MoveCursorLeft
+        | UiAction::MoveCursorRight
+        | UiAction::MoveCursorUp
+        | UiAction::MoveCursorDown
+        | UiAction::MoveCursorWordLeft
+        | UiAction::MoveCursorWordRight
+        | UiAction::MoveCursorLineStart
+        | UiAction::MoveCursorLineEnd
+        | UiAction::DeleteToLineStart
+        | UiAction::DeleteToLineEnd
+        | UiAction::DeleteWordLeft
+        | UiAction::Submit
+        | UiAction::Paste(_)
+        | UiAction::Ignore => false,
     }
 }
 
