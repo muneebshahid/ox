@@ -34,17 +34,17 @@ pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 
 /// Builds the full output payload for this frame.
 ///
 /// Inputs:
-/// - `state`: UI state containing transcript text.
+/// - `state`: UI state containing output log text.
 /// - `meta`: session metadata used by the banner.
 ///
 /// Behavior:
 /// - Starts with banner rows.
-/// - Appends a blank separator and transcript lines when transcript is non-empty.
+/// - Appends a blank separator and output log lines when output log is non-empty.
 /// - Produces styled and plain representations of the same content.
 ///
 /// Example:
-/// - If transcript is empty, output contains only banner rows.
-/// - If transcript is `"hello\nworld"`, output plain lines are:
+/// - If output log is empty, output contains only banner rows.
+/// - If output log is `"hello\nworld"`, output plain lines are:
 ///   - banner rows
 ///   - `""` (separator)
 ///   - `"hello"`
@@ -59,11 +59,12 @@ pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 
 ///   - `plain_lines`: unstyled lines for wrap/scroll computations.
 pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputView {
     let (mut lines, mut plain_lines) = build_banner_lines(meta);
+    let output_log = state.output_log();
 
-    if !state.transcript().is_empty() {
+    if !output_log.is_empty() {
         lines.push(Line::from(String::new()));
         plain_lines.push(String::new());
-        for line in state.transcript().split('\n') {
+        for line in output_log.split('\n') {
             lines.push(Line::from(line.to_string()));
             plain_lines.push(line.to_string());
         }
@@ -79,34 +80,23 @@ pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputVi
 ///
 /// Inputs:
 /// - `frame`: frame to render into.
-/// - `state`: mutable state containing manual scroll position.
 /// - `output`: prebuilt styled/plain output content.
 /// - `area`: output pane rectangle from layout.
+/// - `scroll_offset_top`: precomputed top-of-buffer offset for paragraph scroll.
 ///
 /// Behavior:
-/// - Computes current maximum scroll from wrapped content and viewport size.
-/// - Clamps state scroll to that max to avoid overscroll debt.
-/// - Converts "lines from bottom" into ratatui scroll offset.
 /// - Draws wrapped paragraph content into `area`.
 ///
 /// Output:
 /// - No return value; writes widgets into `frame`.
 pub(super) fn draw_output(
     frame: &mut Frame<'_>,
-    state: &mut TuiState,
     output: &OutputView,
     area: Rect,
+    scroll_offset_top: u16,
 ) {
-    let max_scroll = viewport::max_scroll_offset(&output.plain_lines, area.width, area.height);
-    state.clamp_output_scroll_lines_from_bottom(max_scroll);
-    let scroll = viewport::scroll_offset(
-        &output.plain_lines,
-        area.width,
-        area.height,
-        state.output_scroll_lines_from_bottom(),
-    );
     let output = Paragraph::new(output.text.clone())
-        .scroll((scroll, 0))
+        .scroll((scroll_offset_top, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(output, area);
 }
@@ -205,7 +195,7 @@ mod tests {
     use super::{BANNER_TOP_PADDING_ROWS, build_output_view, draw_output, height_rows, viewport};
     use crate::{
         events::types::CoreEvent,
-        tui::{render::RenderMeta, state::TuiState, ui_action::UiAction},
+        tui::{render::RenderMeta, state::TuiState},
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
@@ -220,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn output_contains_welcome_metadata_when_transcript_is_empty() {
+    fn output_contains_welcome_metadata_when_output_log_is_empty() {
         let state = TuiState::new();
         let view = build_output_view(&state, &test_meta_with_branch(None));
 
@@ -244,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn output_appends_transcript_after_blank_separator() {
+    fn output_appends_output_log_after_blank_separator() {
         let mut state = TuiState::new();
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello\nworld".to_string()));
 
@@ -256,7 +246,7 @@ mod tests {
     }
 
     #[test]
-    fn draw_output_clamps_manual_scroll_to_current_max() {
+    fn max_scroll_lines_matches_viewport_scroll_math() {
         let mut state = TuiState::new();
         state.handle_agent_event(CoreEvent::AgentTextDelta(
             (0..40)
@@ -264,21 +254,17 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
         ));
-        let _ = state.handle_ui_action(UiAction::ScrollUp { lines: 500 });
-        assert!(state.output_scroll_lines_from_bottom() > 0);
-
         let output = build_output_view(&state, &test_meta_with_branch(None));
-        let expected_max = viewport::max_scroll_offset(&output.plain_lines, 20, 5);
+        let max_scroll = viewport::max_scroll_offset(&output.plain_lines, 20, 5);
+        let scroll = viewport::scroll_offset_from_max(max_scroll, max_scroll);
 
         let backend = TestBackend::new(20, 5);
         let mut terminal = Terminal::new(backend).expect("create test terminal");
         terminal
             .draw(|frame| {
-                draw_output(frame, &mut state, &output, Rect::new(0, 0, 20, 5));
+                draw_output(frame, &output, Rect::new(0, 0, 20, 5), scroll);
             })
             .expect("draw output");
-
-        assert_eq!(state.output_scroll_lines_from_bottom(), expected_max);
     }
 
     #[test]

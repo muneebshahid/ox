@@ -15,10 +15,10 @@ use futures::{FutureExt, StreamExt};
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
-    render::RenderMeta,
+    render_meta::build_render_meta,
     state::{StateCommand, TuiState},
     terminal::UiRenderer,
-    ui_action::{self, UiAction},
+    ui_action,
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
@@ -34,15 +34,7 @@ struct UiRuntime {
 
 impl UiRuntime {
     fn new(app: &AppContext) -> Result<Self> {
-        let cwd = current_dir_for_banner();
-        let git_branch = current_git_branch();
-        let render_meta = RenderMeta::new(
-            app.auth.model().to_string(),
-            app.auth.reasoning_setting().to_string(),
-            app.auth.mode_name().to_string(),
-            cwd,
-            git_branch,
-        );
+        let render_meta = build_render_meta(app);
         Ok(Self {
             renderer: UiRenderer::new(render_meta)?,
             state: TuiState::new(),
@@ -51,30 +43,6 @@ impl UiRuntime {
             ticker: create_ticker(),
         })
     }
-}
-
-fn current_dir_for_banner() -> String {
-    let path =
-        std::env::current_dir().map_or_else(|_| ".".to_string(), |path| path.display().to_string());
-
-    if let Ok(home) = std::env::var("HOME")
-        && path.starts_with(&home)
-    {
-        return format!("~{}", &path[home.len()..]);
-    }
-
-    path
-}
-
-fn current_git_branch() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-
-    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    Some(branch).filter(|b| !b.is_empty() && b != "HEAD")
 }
 
 fn create_ticker() -> time::Interval {
@@ -262,20 +230,10 @@ fn handle_input_during_active_turn(
     event_result: Result<CEvent, std::io::Error>,
 ) -> bool {
     match event_result {
-        Ok(event) => {
-            if ui_action::adapter::is_quit_event(&event) {
-                return true;
-            }
-
-            let ui_action = ui_action::adapter::to_ui_action(event);
-            if matches!(
-                &ui_action,
-                UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
-            ) {
-                let _ = state.handle_ui_action(ui_action);
-            }
-            false
-        }
+        Ok(event) => matches!(
+            state.handle_ui_action_during_active_turn(ui_action::adapter::to_ui_action(event)),
+            StateCommand::Quit
+        ),
         Err(err) => {
             state.handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
             false
@@ -358,7 +316,7 @@ mod tests {
         );
 
         assert!(!should_exit);
-        assert_eq!(state.transcript(), "hello");
+        assert_eq!(state.output_log(), "hello");
     }
 
     #[test]
@@ -381,8 +339,8 @@ mod tests {
     fn active_turn_only_allows_scroll_or_viewport_actions() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
-        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::Up))));
-        assert_eq!(state.output_scroll_lines_from_bottom(), 1);
+        let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
+        assert_eq!(state.output_scroll_lines_from_bottom(), 8);
         assert!(state.take_dirty());
 
         let _ = handle_input_during_active_turn(

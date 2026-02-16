@@ -3,7 +3,10 @@ use std::time::{Duration, Instant};
 
 use super::ui_action::UiAction;
 use crate::events::types::CoreEvent;
+use input_buffer::InputBuffer;
 
+mod input_buffer;
+mod input_cursor;
 mod tool_activity;
 
 const STATUS_IDLE: &str = "Idle";
@@ -23,58 +26,119 @@ enum RunPhase {
     Tool { name: String },
 }
 
+struct InputState {
+    buffer: InputBuffer, // Editable input text and cursor byte-offset state.
+    inner_width: u16,    // Rendered inner width used for wrapped vertical cursor moves.
+}
+
+impl InputState {
+    fn new() -> Self {
+        Self {
+            buffer: InputBuffer::new(),
+            inner_width: 0,
+        }
+    }
+}
+
+struct OutputState {
+    log: String,                   // Append-only output log shown in the output pane.
+    scroll_lines_from_bottom: u16, // Manual scroll distance measured from bottom.
+    reasoning_trace_open: bool,    // Whether `[thinking]` trace is currently open.
+}
+
+impl OutputState {
+    const fn new() -> Self {
+        Self {
+            log: String::new(),
+            scroll_lines_from_bottom: 0,
+            reasoning_trace_open: false,
+        }
+    }
+}
+
+struct StatusState {
+    text: String, // Status row text (for example `Idle`, `Running`, or error text).
+    running_started_at: Option<Instant>, // Start time for current running status.
+    run_phase: RunPhase, // Current running phase label shown in status.
+}
+
+impl StatusState {
+    fn new() -> Self {
+        Self {
+            text: STATUS_IDLE.to_string(),
+            running_started_at: None,
+            run_phase: RunPhase::Thinking,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.text == STATUS_RUNNING
+    }
+
+    fn is_visible(&self) -> bool {
+        self.text != STATUS_IDLE
+    }
+}
+
 pub struct TuiState {
-    transcript: String,
-    status: String,
-    input: String,
-    output_scroll_lines_from_bottom: u16,
-    dirty: bool,
-    running_started_at: Option<Instant>,
-    run_phase: RunPhase,
-    reasoning_trace_open: bool,
+    input: InputState,   // Input-specific state and layout metadata.
+    output: OutputState, // Output log text and output-scroll state.
+    status: StatusState, // Running/phase/status metadata for the status row.
+    dirty: bool,         // Marks whether a redraw is needed.
 }
 
 impl TuiState {
     pub fn new() -> Self {
         Self {
-            transcript: String::new(),
-            status: STATUS_IDLE.to_string(),
-            input: String::new(),
-            output_scroll_lines_from_bottom: 0,
+            input: InputState::new(),
+            output: OutputState::new(),
+            status: StatusState::new(),
             dirty: true,
-            running_started_at: None,
-            run_phase: RunPhase::Thinking,
-            reasoning_trace_open: false,
         }
     }
 
-    pub fn transcript(&self) -> &str {
-        &self.transcript
+    pub fn output_log(&self) -> &str {
+        &self.output.log
     }
 
     pub fn status(&self) -> &str {
-        &self.status
+        &self.status.text
     }
 
     pub fn input(&self) -> &str {
-        &self.input
+        self.input.buffer.text()
+    }
+
+    pub(in crate::tui) fn input_cursor_text(&self) -> &str {
+        self.input.buffer.cursor_text()
     }
 
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
-        self.output_scroll_lines_from_bottom
+        self.output.scroll_lines_from_bottom
     }
 
-    pub(super) fn clamp_output_scroll_lines_from_bottom(&mut self, max_scroll_lines: u16) {
-        self.output_scroll_lines_from_bottom =
-            self.output_scroll_lines_from_bottom.min(max_scroll_lines);
+    pub(in crate::tui) fn apply_render_sync(
+        &mut self,
+        input_inner_width: u16,
+        max_scroll_lines_from_bottom: u16,
+    ) {
+        self.input.inner_width = input_inner_width;
+        self.output.scroll_lines_from_bottom = self
+            .output
+            .scroll_lines_from_bottom
+            .min(max_scroll_lines_from_bottom);
     }
 
     pub fn status_is_running(&self) -> bool {
-        self.status == STATUS_RUNNING
+        self.status.is_running()
+    }
+
+    pub(in crate::tui) fn status_row_visible(&self) -> bool {
+        self.status.is_visible()
     }
 
     pub fn running_phase_label(&self) -> Cow<'_, str> {
-        match &self.run_phase {
+        match &self.status.run_phase {
             RunPhase::Thinking => Cow::Borrowed("Thinking"),
             RunPhase::Responding => Cow::Borrowed("Responding"),
             RunPhase::Tool { name } if name.is_empty() => Cow::Borrowed("Running tool"),
@@ -85,7 +149,8 @@ impl TuiState {
     }
 
     pub fn running_elapsed(&self) -> Duration {
-        self.running_started_at
+        self.status
+            .running_started_at
             .as_ref()
             .map_or(Duration::ZERO, Instant::elapsed)
     }
@@ -101,36 +166,36 @@ impl TuiState {
                 self.set_running_status();
             }
             CoreEvent::AgentReasoningDelta(delta) => {
-                self.run_phase = RunPhase::Thinking;
+                self.status.run_phase = RunPhase::Thinking;
                 self.append_reasoning_delta(&delta);
             }
             CoreEvent::AgentTextDelta(delta) => {
                 self.close_reasoning_trace();
-                if !matches!(self.run_phase, RunPhase::Responding) {
+                if !matches!(self.status.run_phase, RunPhase::Responding) {
                     self.ensure_message_gap();
                 }
-                self.run_phase = RunPhase::Responding;
-                self.transcript.push_str(&delta);
+                self.status.run_phase = RunPhase::Responding;
+                self.output.log.push_str(&delta);
             }
             CoreEvent::AgentTurnEnd => {
                 self.close_reasoning_trace();
                 self.stop_running(STATUS_IDLE.to_string());
-                if !self.transcript.ends_with('\n') {
-                    self.transcript.push('\n');
+                if !self.output.log.ends_with('\n') {
+                    self.output.log.push('\n');
                 }
             }
             CoreEvent::AgentToolCallStart {
                 tool_name, args, ..
             } => {
                 self.close_reasoning_trace();
-                self.run_phase = RunPhase::Tool {
+                self.status.run_phase = RunPhase::Tool {
                     name: tool_name.clone(),
                 };
                 let message = tool_activity::format_tool_start(&tool_name, &args);
-                self.push_transcript_line(&message);
+                self.push_output_log_line(&message);
             }
             CoreEvent::AgentToolCallEnd { .. } => {
-                self.run_phase = RunPhase::Thinking;
+                self.status.run_phase = RunPhase::Thinking;
             }
             CoreEvent::Error(message) => {
                 self.close_reasoning_trace();
@@ -143,19 +208,40 @@ impl TuiState {
     pub fn handle_ui_action(&mut self, action: UiAction) -> StateCommand {
         match action {
             UiAction::Insert(c) => {
-                self.input.push(c);
+                self.input.buffer.insert_char(c);
                 self.mark_dirty();
                 StateCommand::None
             }
-            UiAction::Backspace => {
-                self.input.pop();
-                self.mark_dirty();
-                StateCommand::None
+            UiAction::Backspace => self.finish_input_mutation(InputBuffer::backspace),
+            UiAction::Delete => self.finish_input_mutation(InputBuffer::delete_forward),
+            UiAction::DeleteToLineStart => {
+                self.finish_input_mutation(InputBuffer::delete_to_line_start)
             }
+            UiAction::DeleteToLineEnd => {
+                self.finish_input_mutation(InputBuffer::delete_to_line_end)
+            }
+            UiAction::MoveCursorLeft => self.finish_input_mutation(InputBuffer::move_left),
+            UiAction::MoveCursorRight => self.finish_input_mutation(InputBuffer::move_right),
+            UiAction::MoveCursorUp => {
+                let width = self.input.inner_width;
+                self.finish_input_mutation(|input| input.move_up(width))
+            }
+            UiAction::MoveCursorDown => {
+                let width = self.input.inner_width;
+                self.finish_input_mutation(|input| input.move_down(width))
+            }
+            UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputBuffer::move_word_left),
+            UiAction::MoveCursorWordRight => {
+                self.finish_input_mutation(InputBuffer::move_word_right)
+            }
+            UiAction::MoveCursorLineStart => {
+                self.finish_input_mutation(InputBuffer::move_line_start)
+            }
+            UiAction::MoveCursorLineEnd => self.finish_input_mutation(InputBuffer::move_line_end),
+            UiAction::DeleteWordLeft => self.finish_input_mutation(InputBuffer::delete_word_left),
             UiAction::Paste(pasted) => {
-                self.input.push_str(&pasted);
-                self.mark_dirty();
-                StateCommand::None
+                self.input.buffer.paste(&pasted);
+                self.finish_input_edit(!pasted.is_empty())
             }
             UiAction::ScrollUp { lines } => {
                 self.scroll_up(lines);
@@ -175,9 +261,35 @@ impl TuiState {
         }
     }
 
+    pub(in crate::tui) fn handle_ui_action_during_active_turn(
+        &mut self,
+        action: UiAction,
+    ) -> StateCommand {
+        match action {
+            UiAction::Quit => StateCommand::Quit,
+            _ if is_active_turn_action_allowed(&action) => self.handle_ui_action(action),
+            _ => StateCommand::None,
+        }
+    }
+
+    const fn finish_input_edit(&mut self, changed: bool) -> StateCommand {
+        if changed {
+            self.mark_dirty();
+        }
+        StateCommand::None
+    }
+
+    fn finish_input_mutation(
+        &mut self,
+        mutator: impl FnOnce(&mut InputBuffer) -> bool,
+    ) -> StateCommand {
+        let changed = mutator(&mut self.input.buffer);
+        self.finish_input_edit(changed)
+    }
+
     fn submit_input(&mut self) -> StateCommand {
-        let submitted = self.input.trim().to_string();
-        self.input.clear();
+        let submitted = self.input.buffer.text().trim().to_string();
+        self.input.buffer.clear();
         self.mark_dirty();
 
         if submitted.is_empty() {
@@ -187,7 +299,7 @@ impl TuiState {
             return StateCommand::Quit;
         }
 
-        self.output_scroll_lines_from_bottom = 0;
+        self.output.scroll_lines_from_bottom = 0;
         self.push_user_message(&submitted);
         self.set_running_status();
         self.mark_dirty();
@@ -198,8 +310,8 @@ impl TuiState {
         if lines == 0 {
             return;
         }
-        self.output_scroll_lines_from_bottom =
-            self.output_scroll_lines_from_bottom.saturating_add(lines);
+        self.output.scroll_lines_from_bottom =
+            self.output.scroll_lines_from_bottom.saturating_add(lines);
         self.mark_dirty();
     }
 
@@ -207,23 +319,23 @@ impl TuiState {
         if lines == 0 {
             return;
         }
-        self.output_scroll_lines_from_bottom =
-            self.output_scroll_lines_from_bottom.saturating_sub(lines);
+        self.output.scroll_lines_from_bottom =
+            self.output.scroll_lines_from_bottom.saturating_sub(lines);
         self.mark_dirty();
     }
 
     fn set_running_status(&mut self) {
-        if self.running_started_at.is_none() {
-            self.running_started_at = Some(Instant::now());
+        if self.status.running_started_at.is_none() {
+            self.status.running_started_at = Some(Instant::now());
         }
-        self.status = STATUS_RUNNING.to_string();
-        self.run_phase = RunPhase::Thinking;
+        self.status.text = STATUS_RUNNING.to_string();
+        self.status.run_phase = RunPhase::Thinking;
     }
 
     fn stop_running(&mut self, status: String) {
-        self.status = status;
-        self.running_started_at = None;
-        self.run_phase = RunPhase::Thinking;
+        self.status.text = status;
+        self.status.running_started_at = None;
+        self.status.run_phase = RunPhase::Thinking;
     }
 
     fn append_reasoning_delta(&mut self, delta: &str) {
@@ -231,49 +343,75 @@ impl TuiState {
             return;
         }
 
-        if !self.reasoning_trace_open {
+        if !self.output.reasoning_trace_open {
             self.ensure_message_gap();
-            self.transcript.push_str("[thinking] ");
-            self.reasoning_trace_open = true;
+            self.output.log.push_str("[thinking] ");
+            self.output.reasoning_trace_open = true;
         }
-        self.transcript.push_str(delta);
+        self.output.log.push_str(delta);
     }
 
     fn close_reasoning_trace(&mut self) {
-        if self.reasoning_trace_open {
-            if !self.transcript.ends_with('\n') {
-                self.transcript.push('\n');
+        if self.output.reasoning_trace_open {
+            if !self.output.log.ends_with('\n') {
+                self.output.log.push('\n');
             }
-            self.reasoning_trace_open = false;
+            self.output.reasoning_trace_open = false;
         }
     }
 
     fn push_user_message(&mut self, input: &str) {
         self.ensure_message_gap();
-        self.push_transcript_line(&format!("> {input}"));
+        self.push_output_log_line(&format!("> {input}"));
     }
 
-    fn push_transcript_line(&mut self, line: &str) {
-        if !self.transcript.is_empty() && !self.transcript.ends_with('\n') {
-            self.transcript.push('\n');
+    fn push_output_log_line(&mut self, line: &str) {
+        if !self.output.log.is_empty() && !self.output.log.ends_with('\n') {
+            self.output.log.push('\n');
         }
-        self.transcript.push_str(line);
-        self.transcript.push('\n');
+        self.output.log.push_str(line);
+        self.output.log.push('\n');
     }
 
     fn ensure_message_gap(&mut self) {
-        if self.transcript.is_empty() || self.transcript.ends_with("\n\n") {
+        if self.output.log.is_empty() || self.output.log.ends_with("\n\n") {
             return;
         }
-        if self.transcript.ends_with('\n') {
-            self.transcript.push('\n');
+        if self.output.log.ends_with('\n') {
+            self.output.log.push('\n');
         } else {
-            self.transcript.push_str("\n\n");
+            self.output.log.push_str("\n\n");
         }
     }
 
     const fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+}
+
+const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
+    // Keep this exhaustive so newly added UiAction variants force an explicit
+    // active-turn policy decision.
+    match action {
+        UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged => true,
+        UiAction::Quit
+        | UiAction::Insert(_)
+        | UiAction::Backspace
+        | UiAction::Delete
+        | UiAction::MoveCursorLeft
+        | UiAction::MoveCursorRight
+        | UiAction::MoveCursorUp
+        | UiAction::MoveCursorDown
+        | UiAction::MoveCursorWordLeft
+        | UiAction::MoveCursorWordRight
+        | UiAction::MoveCursorLineStart
+        | UiAction::MoveCursorLineEnd
+        | UiAction::DeleteToLineStart
+        | UiAction::DeleteToLineEnd
+        | UiAction::DeleteWordLeft
+        | UiAction::Submit
+        | UiAction::Paste(_)
+        | UiAction::Ignore => false,
     }
 }
 
@@ -299,20 +437,20 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta(" world".to_string()));
         state.handle_agent_event(CoreEvent::AgentTurnEnd);
         assert_eq!(state.status(), "Idle");
-        assert_eq!(state.transcript(), "hello world\n");
+        assert_eq!(state.output_log(), "hello world\n");
         assert_eq!(state.input(), "");
         assert!(state.take_dirty());
     }
 
     #[test]
-    fn submit_creates_command_and_echoes_transcript() {
+    fn submit_creates_command_and_echoes_output_log() {
         let mut state = TuiState::new();
         state.handle_ui_action(UiAction::Insert('h'));
         state.handle_ui_action(UiAction::Insert('i'));
 
         let command = state.handle_ui_action(UiAction::Submit);
         assert_eq!(command, StateCommand::Submit("hi".to_string()));
-        assert_eq!(state.transcript(), "> hi\n");
+        assert_eq!(state.output_log(), "> hi\n");
         assert_eq!(state.status(), "Running");
         assert_eq!(state.input(), "");
     }
@@ -345,7 +483,7 @@ mod tests {
             args: r#"{"path":"src/main.rs","offset":10,"limit":5}"#.to_string(),
         });
 
-        assert_eq!(state.transcript(), "[tool] reading src/main.rs:10-14\n");
+        assert_eq!(state.output_log(), "[tool] reading src/main.rs:10-14\n");
     }
 
     #[test]
@@ -377,7 +515,7 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta("final".to_string()));
 
         assert_eq!(
-            state.transcript(),
+            state.output_log(),
             "[thinking] step one + step two\n\nfinal"
         );
     }
@@ -393,7 +531,7 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
         state.handle_agent_event(CoreEvent::AgentTurnEnd);
 
-        assert_eq!(state.transcript(), "> hi\n\nhello\n");
+        assert_eq!(state.output_log(), "> hi\n\nhello\n");
     }
 
     #[test]
@@ -405,7 +543,7 @@ mod tests {
         state.handle_ui_action(UiAction::Paste("next".to_string()));
         let _ = state.handle_ui_action(UiAction::Submit);
 
-        assert_eq!(state.transcript(), "hello\n\n> next\n");
+        assert_eq!(state.output_log(), "hello\n\n> next\n");
     }
 
     #[test]
@@ -437,6 +575,115 @@ mod tests {
     }
 
     #[test]
+    fn cursor_moves_left_and_right_with_clamps() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+        assert_eq!(state.input_cursor_text(), "hello");
+
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        assert_eq!(state.input_cursor_text(), "hel");
+
+        state.handle_ui_action(UiAction::MoveCursorRight);
+        assert_eq!(state.input_cursor_text(), "hell");
+
+        for _ in 0..10 {
+            state.handle_ui_action(UiAction::MoveCursorLeft);
+        }
+        assert_eq!(state.input_cursor_text(), "");
+
+        for _ in 0..10 {
+            state.handle_ui_action(UiAction::MoveCursorRight);
+        }
+        assert_eq!(state.input_cursor_text(), "hello");
+    }
+
+    #[test]
+    fn cursor_moves_up_and_down_across_wrapped_input_rows() {
+        let mut state = TuiState::new();
+        state.apply_render_sync(5, u16::MAX);
+        state.handle_ui_action(UiAction::Paste("abcdefghij".to_string()));
+        let end_len = state.input_cursor_text().len();
+
+        state.handle_ui_action(UiAction::MoveCursorUp);
+        let mid_len = state.input_cursor_text().len();
+        assert!(mid_len < end_len);
+
+        state.handle_ui_action(UiAction::MoveCursorDown);
+        assert_eq!(state.input_cursor_text().len(), end_len);
+    }
+
+    #[test]
+    fn insert_and_backspace_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("ac".to_string()));
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::Insert('b'));
+        assert_eq!(state.input(), "abc");
+        assert_eq!(state.input_cursor_text(), "ab");
+
+        state.handle_ui_action(UiAction::Backspace);
+        assert_eq!(state.input(), "ac");
+        assert_eq!(state.input_cursor_text(), "a");
+    }
+
+    #[test]
+    fn line_home_end_and_delete_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+
+        state.handle_ui_action(UiAction::MoveCursorLineStart);
+        assert_eq!(state.input_cursor_text(), "");
+
+        state.handle_ui_action(UiAction::Delete);
+        assert_eq!(state.input(), "ello");
+        assert_eq!(state.input_cursor_text(), "");
+
+        state.handle_ui_action(UiAction::MoveCursorLineEnd);
+        assert_eq!(state.input_cursor_text(), "ello");
+    }
+
+    #[test]
+    fn line_navigation_and_delete_apply_within_current_line() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("ab\ncd\nef".to_string()));
+
+        state.handle_ui_action(UiAction::MoveCursorLineStart);
+        assert_eq!(state.input_cursor_text(), "ab\ncd\n");
+
+        state.handle_ui_action(UiAction::DeleteToLineEnd);
+        assert_eq!(state.input(), "ab\ncd\n");
+        assert_eq!(state.input_cursor_text(), "ab\ncd\n");
+
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::MoveCursorLeft);
+        state.handle_ui_action(UiAction::DeleteToLineStart);
+        assert_eq!(state.input(), "ab\nd\n");
+        assert_eq!(state.input_cursor_text(), "ab\n");
+
+        state.handle_ui_action(UiAction::MoveCursorLineEnd);
+        assert_eq!(state.input_cursor_text(), "ab\nd");
+    }
+
+    #[test]
+    fn word_navigation_and_word_delete_apply_at_cursor_position() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello   world test".to_string()));
+        assert_eq!(state.input_cursor_text(), "hello   world test");
+
+        state.handle_ui_action(UiAction::MoveCursorWordLeft);
+        assert_eq!(state.input_cursor_text(), "hello   world ");
+        state.handle_ui_action(UiAction::MoveCursorWordLeft);
+        assert_eq!(state.input_cursor_text(), "hello   ");
+        state.handle_ui_action(UiAction::MoveCursorWordRight);
+        assert_eq!(state.input_cursor_text(), "hello   world");
+
+        state.handle_ui_action(UiAction::DeleteWordLeft);
+        assert_eq!(state.input(), "hello    test");
+        assert_eq!(state.input_cursor_text(), "hello   ");
+    }
+
+    #[test]
     fn viewport_change_marks_state_dirty() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
@@ -447,12 +694,40 @@ mod tests {
     }
 
     #[test]
+    fn active_turn_policy_allows_scroll_but_ignores_typing() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+
+        let command = state.handle_ui_action_during_active_turn(UiAction::ScrollUp { lines: 3 });
+        assert_eq!(command, StateCommand::None);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 3);
+        assert!(state.take_dirty());
+
+        let command = state.handle_ui_action_during_active_turn(UiAction::Insert('x'));
+        assert_eq!(command, StateCommand::None);
+        assert_eq!(state.input(), "");
+    }
+
+    #[test]
+    fn active_turn_policy_ignores_submit_and_allows_quit() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+
+        let submit = state.handle_ui_action_during_active_turn(UiAction::Submit);
+        assert_eq!(submit, StateCommand::None);
+        assert_eq!(state.input(), "hello");
+
+        let quit = state.handle_ui_action_during_active_turn(UiAction::Quit);
+        assert_eq!(quit, StateCommand::Quit);
+    }
+
+    #[test]
     fn clamps_scroll_offset_to_current_max_when_content_cannot_scroll_further() {
         let mut state = TuiState::new();
         state.handle_ui_action(UiAction::ScrollUp { lines: 100 });
         assert_eq!(state.output_scroll_lines_from_bottom(), 100);
 
-        state.clamp_output_scroll_lines_from_bottom(5);
+        state.apply_render_sync(0, 5);
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
     }

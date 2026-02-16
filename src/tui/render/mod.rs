@@ -1,4 +1,4 @@
-mod input;
+mod input_pane;
 mod output;
 mod viewport;
 
@@ -8,7 +8,7 @@ use super::state::TuiState;
 use output::{build_output_view, draw_output};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -18,6 +18,11 @@ const RUNNING_BADGE_TOGGLE_INTERVAL: Duration = Duration::from_millis(250);
 const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
 const OX_BADGE_X_COLOR: Color = Color::Cyan;
+
+pub(super) struct RenderSync {
+    pub(super) input_inner_width: u16,
+    pub(super) max_output_scroll_lines_from_bottom: u16,
+}
 
 pub struct RenderMeta {
     model: String,
@@ -60,7 +65,7 @@ impl RenderMeta {
 ///
 /// Inputs:
 /// - `frame`: current ratatui frame to render into.
-/// - `state`: mutable UI state; draw may clamp scroll values based on viewport.
+/// - `state`: immutable UI state used for read-only rendering decisions.
 /// - `meta`: static banner metadata for this session.
 ///
 /// Behavior:
@@ -69,14 +74,15 @@ impl RenderMeta {
 /// - Draws output text, optional running status line, input box, and cursor.
 ///
 /// Output:
-/// - No return value; writes widgets into `frame`.
-pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
+/// - `RenderSync` values that state owners apply after draw.
+pub(super) fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) -> RenderSync {
     let area = frame.area();
     let output = build_output_view(state, meta);
-    let show_status = status_visible(state);
+    let show_status = state.status_row_visible();
     let status_height_rows = u16::from(show_status);
     let max_input_height_rows = area.height.saturating_sub(status_height_rows);
-    let input_height_rows = input::height_rows(state.input(), area.width, max_input_height_rows);
+    let input_height_rows =
+        input_pane::height_rows(state.input(), area.width, max_input_height_rows);
     let max_output_height_rows = area
         .height
         .saturating_sub(input_height_rows.saturating_add(status_height_rows));
@@ -91,12 +97,29 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     ])
     .areas(area);
 
-    draw_output(frame, state, &output, output_area);
+    let max_output_scroll_lines_from_bottom =
+        viewport::max_scroll_offset(&output.plain_lines, output_area.width, output_area.height);
+    let output_scroll_top = viewport::scroll_offset_from_max(
+        max_output_scroll_lines_from_bottom,
+        state.output_scroll_lines_from_bottom(),
+    );
+    draw_output(frame, &output, output_area, output_scroll_top);
     if show_status {
         draw_status(frame, state, status_area);
     }
-    input::draw_input(frame, state, input_area);
-    input::place_input_cursor(frame, state, input_area);
+    let input_inner_width = input_area
+        .inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        })
+        .width;
+    input_pane::draw_input(frame, state, input_area);
+    input_pane::place_input_cursor(frame, state, input_area);
+
+    RenderSync {
+        input_inner_width,
+        max_output_scroll_lines_from_bottom,
+    }
 }
 
 /// Draws the status row.
@@ -119,17 +142,6 @@ fn draw_status(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
         Paragraph::new(state.status())
     };
     frame.render_widget(status, area);
-}
-
-/// Returns whether the status row should be visible.
-///
-/// Input:
-/// - `state`: current UI state.
-///
-/// Output:
-/// - `true` when status is not `Idle`, otherwise `false`.
-fn status_visible(state: &TuiState) -> bool {
-    state.status() != "Idle"
 }
 
 /// Builds the animated running status line: `[OX] <phase> (<seconds>s)`.
@@ -169,7 +181,7 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line, status_visible};
+    use super::{OX_BADGE_O_COLOR, OX_BADGE_X_COLOR, running_status_line};
     use crate::{events::types::CoreEvent, tui::state::TuiState};
     use std::time::Duration;
 
@@ -196,12 +208,12 @@ mod tests {
     #[test]
     fn status_visibility_tracks_non_idle_state() {
         let mut state = TuiState::new();
-        assert!(!status_visible(&state));
+        assert!(!state.status_row_visible());
 
         state.handle_agent_event(CoreEvent::AgentTurnStart);
-        assert!(status_visible(&state));
+        assert!(state.status_row_visible());
 
         state.handle_agent_event(CoreEvent::Error("boom".to_string()));
-        assert!(status_visible(&state));
+        assert!(state.status_row_visible());
     }
 }
