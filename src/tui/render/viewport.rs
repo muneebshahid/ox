@@ -50,6 +50,18 @@ pub(super) fn scroll_offset(
     scroll_lines_from_bottom: u16,
 ) -> u16 {
     let max_offset = max_scroll_offset(lines, width, viewport_height);
+    scroll_offset_from_max(max_offset, scroll_lines_from_bottom)
+}
+
+/// Converts a bottom-relative manual scroll into a top-of-buffer offset.
+///
+/// Inputs:
+/// - `max_offset`: maximum valid top offset for current content/viewport.
+/// - `scroll_lines_from_bottom`: manual scroll distance measured from bottom.
+///
+/// Output:
+/// - Top-of-buffer offset (`y`) passed to `Paragraph::scroll`.
+pub(super) const fn scroll_offset_from_max(max_offset: u16, scroll_lines_from_bottom: u16) -> u16 {
     max_offset.saturating_sub(scroll_lines_from_bottom)
 }
 
@@ -135,7 +147,9 @@ fn wrapped_line_count(line: &str, width: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{max_scroll_offset, row_height, scroll_offset, wrapped_line_count};
+    use super::{
+        max_scroll_offset, row_height, scroll_offset, scroll_offset_from_max, wrapped_line_count,
+    };
 
     fn lines(values: &[&str]) -> Vec<String> {
         values.iter().map(|line| (*line).to_string()).collect()
@@ -218,5 +232,10 @@ mod tests {
     fn max_scroll_offset_matches_bottom_offset_when_following_output() {
         let source = lines(&["abcd", "efgh", "ijkl"]);
         assert_eq!(max_scroll_offset(&source, 2, 3), 3);
+    }
+
+    #[test]
+    fn scroll_offset_from_max_clamps_when_bottom_scroll_exceeds_max() {
+        assert_eq!(scroll_offset_from_max(3, 99), 0);
     }
 }

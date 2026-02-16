@@ -83,8 +83,16 @@ impl TerminalGuard {
     }
 
     pub(super) fn draw(&mut self, state: &mut TuiState, meta: &RenderMeta) -> Result<()> {
-        self.terminal
-            .draw(|frame| render::draw(frame, state, meta))?;
+        let mut render_sync = None;
+        self.terminal.draw(|frame| {
+            render_sync = Some(render::draw(frame, state, meta));
+        })?;
+        if let Some(sync) = render_sync {
+            state.apply_render_sync(
+                sync.input_inner_width,
+                sync.max_output_scroll_lines_from_bottom,
+            );
+        }
         Ok(())
     }
 }

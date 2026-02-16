@@ -19,6 +19,11 @@ const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
 const OX_BADGE_X_COLOR: Color = Color::Cyan;
 
+pub(super) struct RenderSync {
+    pub(super) input_inner_width: u16,
+    pub(super) max_output_scroll_lines_from_bottom: u16,
+}
+
 pub struct RenderMeta {
     model: String,
     reasoning: String,
@@ -60,7 +65,7 @@ impl RenderMeta {
 ///
 /// Inputs:
 /// - `frame`: current ratatui frame to render into.
-/// - `state`: mutable UI state; draw may clamp scroll values based on viewport.
+/// - `state`: immutable UI state used for read-only rendering decisions.
 /// - `meta`: static banner metadata for this session.
 ///
 /// Behavior:
@@ -69,8 +74,8 @@ impl RenderMeta {
 /// - Draws output text, optional running status line, input box, and cursor.
 ///
 /// Output:
-/// - No return value; writes widgets into `frame`.
-pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
+/// - `RenderSync` values that state owners apply after draw.
+pub(super) fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) -> RenderSync {
     let area = frame.area();
     let output = build_output_view(state, meta);
     let show_status = status_visible(state);
@@ -92,20 +97,29 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     ])
     .areas(area);
 
-    draw_output(frame, state, &output, output_area);
+    let max_output_scroll_lines_from_bottom =
+        viewport::max_scroll_offset(&output.plain_lines, output_area.width, output_area.height);
+    let output_scroll_top = viewport::scroll_offset_from_max(
+        max_output_scroll_lines_from_bottom,
+        state.output_scroll_lines_from_bottom(),
+    );
+    draw_output(frame, &output, output_area, output_scroll_top);
     if show_status {
         draw_status(frame, state, status_area);
     }
-    state.set_input_inner_width(
-        input_area
-            .inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            })
-            .width,
-    );
+    let input_inner_width = input_area
+        .inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        })
+        .width;
     input_pane::draw_input(frame, state, input_area);
     input_pane::place_input_cursor(frame, state, input_area);
+
+    RenderSync {
+        input_inner_width,
+        max_output_scroll_lines_from_bottom,
+    }
 }
 
 /// Draws the status row.

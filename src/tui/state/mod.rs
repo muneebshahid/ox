@@ -69,17 +69,19 @@ impl TuiState {
         self.input_buffer.cursor_text()
     }
 
-    pub(in crate::tui) const fn set_input_inner_width(&mut self, width: u16) {
-        self.input_inner_width = width;
-    }
-
     pub const fn output_scroll_lines_from_bottom(&self) -> u16 {
         self.output_scroll_lines_from_bottom
     }
 
-    pub(super) fn clamp_output_scroll_lines_from_bottom(&mut self, max_scroll_lines: u16) {
-        self.output_scroll_lines_from_bottom =
-            self.output_scroll_lines_from_bottom.min(max_scroll_lines);
+    pub(in crate::tui) fn apply_render_sync(
+        &mut self,
+        input_inner_width: u16,
+        max_scroll_lines_from_bottom: u16,
+    ) {
+        self.input_inner_width = input_inner_width;
+        self.output_scroll_lines_from_bottom = self
+            .output_scroll_lines_from_bottom
+            .min(max_scroll_lines_from_bottom);
     }
 
     pub fn status_is_running(&self) -> bool {
@@ -512,7 +514,7 @@ mod tests {
     #[test]
     fn cursor_moves_up_and_down_across_wrapped_input_rows() {
         let mut state = TuiState::new();
-        state.set_input_inner_width(5);
+        state.apply_render_sync(5, u16::MAX);
         state.handle_ui_action(UiAction::Paste("abcdefghij".to_string()));
         let end_len = state.input_cursor_text().len();
 
@@ -610,7 +612,7 @@ mod tests {
         state.handle_ui_action(UiAction::ScrollUp { lines: 100 });
         assert_eq!(state.output_scroll_lines_from_bottom(), 100);
 
-        state.clamp_output_scroll_lines_from_bottom(5);
+        state.apply_render_sync(0, 5);
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
     }
