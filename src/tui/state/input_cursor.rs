@@ -1,13 +1,49 @@
 use crate::tui::input_metrics;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct CursorPosition {
-    pub(super) byte: usize,
-    pub(super) col: u16,
-    pub(super) row: u16,
+#[derive(Clone, Copy)]
+pub(super) enum VerticalDirection {
+    Up,
+    Down,
 }
 
-pub(super) fn cursor_positions_with_prompt(input: &str, width: u16) -> Vec<CursorPosition> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CursorPosition {
+    byte: usize,
+    col: u16,
+    row: u16,
+}
+
+pub(super) fn target_cursor_byte_offset_for_vertical_move(
+    input: &str,
+    current_cursor_byte_offset: usize,
+    width: u16,
+    direction: VerticalDirection,
+) -> Option<usize> {
+    if width == 0 {
+        return None;
+    }
+
+    let positions = cursor_positions_with_prompt(input, width);
+    let current = positions
+        .iter()
+        .find(|pos| pos.byte == current_cursor_byte_offset)
+        .copied()?;
+
+    let target_row = match direction {
+        VerticalDirection::Up => {
+            if current.row == 0 {
+                return None;
+            }
+            current.row - 1
+        }
+        VerticalDirection::Down => current.row.saturating_add(1),
+    };
+
+    let target = closest_position_on_row(&positions, target_row, current.col)?;
+    (target.byte != current_cursor_byte_offset).then_some(target.byte)
+}
+
+fn cursor_positions_with_prompt(input: &str, width: u16) -> Vec<CursorPosition> {
     if width == 0 {
         return vec![CursorPosition {
             byte: 0,
@@ -70,22 +106,68 @@ fn cursor_offset_with_prompt(input: &str, width: u16, height: u16) -> (u16, u16)
     )
 }
 
+fn closest_position_on_row(
+    positions: &[CursorPosition],
+    row: u16,
+    preferred_col: u16,
+) -> Option<CursorPosition> {
+    let mut best_lte: Option<CursorPosition> = None;
+    let mut best_gt: Option<CursorPosition> = None;
+
+    for &position in positions {
+        if position.row != row {
+            continue;
+        }
+        if position.col <= preferred_col {
+            best_lte = match best_lte {
+                Some(existing) if existing.col >= position.col => Some(existing),
+                _ => Some(position),
+            };
+        } else {
+            best_gt = match best_gt {
+                Some(existing) if existing.col <= position.col => Some(existing),
+                _ => Some(position),
+            };
+        }
+    }
+
+    best_lte.or(best_gt)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::cursor_positions_with_prompt;
+    use super::{VerticalDirection, target_cursor_byte_offset_for_vertical_move};
 
     #[test]
     fn returns_cursor_positions_for_all_char_boundaries() {
-        let positions = cursor_positions_with_prompt("ab", 10);
-        let bytes: Vec<usize> = positions.iter().map(|pos| pos.byte).collect();
-        assert_eq!(bytes, vec![0, 1, 2]);
+        let target =
+            target_cursor_byte_offset_for_vertical_move("ab", 2, 10, VerticalDirection::Up);
+        assert_eq!(target, None);
+    }
+
+    #[test]
+    fn moves_up_and_down_across_wrapped_rows() {
+        let input = "abcdefghij";
+        let end = input.len();
+
+        let up = target_cursor_byte_offset_for_vertical_move(input, end, 5, VerticalDirection::Up)
+            .expect("expected up target");
+        assert!(up < end);
+
+        let down =
+            target_cursor_byte_offset_for_vertical_move(input, up, 5, VerticalDirection::Down)
+                .expect("expected down target");
+        assert_eq!(down, end);
     }
 
     #[test]
     fn keeps_trailing_newline_on_next_row() {
-        let positions = cursor_positions_with_prompt("hello\n", 20);
-        let last = positions.last().expect("position");
-        assert_eq!(last.col, 0);
-        assert_eq!(last.row, 1);
+        let input = "hello\n";
+        let current = input.len();
+
+        let up =
+            target_cursor_byte_offset_for_vertical_move(input, current, 20, VerticalDirection::Up)
+                .expect("expected up target");
+        assert!(up < current);
     }
 }

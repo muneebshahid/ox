@@ -1,9 +1,9 @@
-use super::input_cursor::{self, CursorPosition};
+use super::input_cursor;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct InputBuffer {
     text: String,
-    cursor_byte: usize,
+    cursor_byte_offset: usize,
 }
 
 impl InputBuffer {
@@ -16,207 +16,158 @@ impl InputBuffer {
     }
 
     #[cfg(test)]
-    pub(super) const fn cursor_byte(&self) -> usize {
-        self.cursor_byte
+    pub(super) const fn cursor_byte_offset(&self) -> usize {
+        self.cursor_byte_offset
+    }
+
+    fn set_cursor_byte_offset(&mut self, cursor_byte_offset: usize) -> bool {
+        if cursor_byte_offset == self.cursor_byte_offset
+            || cursor_byte_offset > self.text.len()
+            || !self.text.is_char_boundary(cursor_byte_offset)
+        {
+            return false;
+        }
+        self.cursor_byte_offset = cursor_byte_offset;
+        true
+    }
+
+    pub(super) fn move_up(&mut self, width: u16) -> bool {
+        self.move_vertical(width, input_cursor::VerticalDirection::Up)
+    }
+
+    pub(super) fn move_down(&mut self, width: u16) -> bool {
+        self.move_vertical(width, input_cursor::VerticalDirection::Down)
+    }
+
+    fn move_vertical(&mut self, width: u16, direction: input_cursor::VerticalDirection) -> bool {
+        let target = input_cursor::target_cursor_byte_offset_for_vertical_move(
+            &self.text,
+            self.cursor_byte_offset,
+            width,
+            direction,
+        );
+        target.is_some_and(|byte| self.set_cursor_byte_offset(byte))
     }
 
     pub(super) fn cursor_text(&self) -> &str {
-        &self.text[..self.cursor_byte]
+        &self.text[..self.cursor_byte_offset]
     }
 
     pub(super) fn clear(&mut self) {
         self.text.clear();
-        self.cursor_byte = 0;
+        self.cursor_byte_offset = 0;
     }
 
     pub(super) fn insert_char(&mut self, ch: char) {
-        self.text.insert(self.cursor_byte, ch);
-        self.cursor_byte += ch.len_utf8();
+        self.text.insert(self.cursor_byte_offset, ch);
+        self.cursor_byte_offset += ch.len_utf8();
     }
 
     pub(super) fn paste(&mut self, pasted: &str) {
         if pasted.is_empty() {
             return;
         }
-        self.text.insert_str(self.cursor_byte, pasted);
-        self.cursor_byte += pasted.len();
+        self.text.insert_str(self.cursor_byte_offset, pasted);
+        self.cursor_byte_offset += pasted.len();
     }
 
     pub(super) fn backspace(&mut self) -> bool {
-        let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte) else {
+        let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.text.replace_range(prev..self.cursor_byte, "");
-        self.cursor_byte = prev;
+        self.text.replace_range(prev..self.cursor_byte_offset, "");
+        self.cursor_byte_offset = prev;
         true
     }
 
     pub(super) fn delete_forward(&mut self) -> bool {
-        let Some(next) = next_char_boundary(&self.text, self.cursor_byte) else {
+        let Some(next) = next_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.text.replace_range(self.cursor_byte..next, "");
+        self.text.replace_range(self.cursor_byte_offset..next, "");
         true
     }
 
     pub(super) fn delete_to_line_start(&mut self) -> bool {
-        let target = line_start_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = line_start_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.text.replace_range(target..self.cursor_byte, "");
-        self.cursor_byte = target;
+        self.text.replace_range(target..self.cursor_byte_offset, "");
+        self.cursor_byte_offset = target;
         true
     }
 
     pub(super) fn delete_to_line_end(&mut self) -> bool {
-        let target = line_end_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = line_end_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.text.replace_range(self.cursor_byte..target, "");
+        self.text.replace_range(self.cursor_byte_offset..target, "");
         true
     }
 
     pub(super) fn move_left(&mut self) -> bool {
-        let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte) else {
+        let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.cursor_byte = prev;
+        self.cursor_byte_offset = prev;
         true
     }
 
     pub(super) fn move_right(&mut self) -> bool {
-        let Some(next) = next_char_boundary(&self.text, self.cursor_byte) else {
+        let Some(next) = next_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.cursor_byte = next;
+        self.cursor_byte_offset = next;
         true
     }
 
     pub(super) fn move_word_left(&mut self) -> bool {
-        let target = prev_word_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = prev_word_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.cursor_byte = target;
+        self.cursor_byte_offset = target;
         true
     }
 
     pub(super) fn move_word_right(&mut self) -> bool {
-        let target = next_word_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = next_word_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.cursor_byte = target;
+        self.cursor_byte_offset = target;
         true
     }
 
-    pub(super) fn move_up(&mut self, width: u16) -> bool {
-        self.move_vertical(width, VerticalDirection::Up)
-    }
-
-    pub(super) fn move_down(&mut self, width: u16) -> bool {
-        self.move_vertical(width, VerticalDirection::Down)
-    }
-
     pub(super) fn move_line_start(&mut self) -> bool {
-        let target = line_start_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = line_start_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.cursor_byte = target;
+        self.cursor_byte_offset = target;
         true
     }
 
     pub(super) fn move_line_end(&mut self) -> bool {
-        let target = line_end_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = line_end_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.cursor_byte = target;
+        self.cursor_byte_offset = target;
         true
     }
 
     pub(super) fn delete_word_left(&mut self) -> bool {
-        let target = prev_word_boundary(&self.text, self.cursor_byte);
-        if target == self.cursor_byte {
+        let target = prev_word_boundary(&self.text, self.cursor_byte_offset);
+        if target == self.cursor_byte_offset {
             return false;
         }
-        self.text.replace_range(target..self.cursor_byte, "");
-        self.cursor_byte = target;
+        self.text.replace_range(target..self.cursor_byte_offset, "");
+        self.cursor_byte_offset = target;
         true
     }
-
-    fn move_vertical(&mut self, width: u16, direction: VerticalDirection) -> bool {
-        if width == 0 {
-            return false;
-        }
-
-        let positions = input_cursor::cursor_positions_with_prompt(&self.text, width);
-        let Some(current) = positions
-            .iter()
-            .find(|pos| pos.byte == self.cursor_byte)
-            .copied()
-        else {
-            return false;
-        };
-
-        let target_row = match direction {
-            VerticalDirection::Up => {
-                if current.row == 0 {
-                    return false;
-                }
-                current.row - 1
-            }
-            VerticalDirection::Down => current.row.saturating_add(1),
-        };
-
-        let Some(target) = closest_position_on_row(&positions, target_row, current.col) else {
-            return false;
-        };
-
-        if target.byte == self.cursor_byte {
-            return false;
-        }
-
-        self.cursor_byte = target.byte;
-        true
-    }
-}
-
-#[derive(Clone, Copy)]
-enum VerticalDirection {
-    Up,
-    Down,
-}
-
-fn closest_position_on_row(
-    positions: &[CursorPosition],
-    row: u16,
-    preferred_col: u16,
-) -> Option<CursorPosition> {
-    let mut best_lte: Option<CursorPosition> = None;
-    let mut best_gt: Option<CursorPosition> = None;
-
-    for &position in positions {
-        if position.row != row {
-            continue;
-        }
-        if position.col <= preferred_col {
-            best_lte = match best_lte {
-                Some(existing) if existing.col >= position.col => Some(existing),
-                _ => Some(position),
-            };
-        } else {
-            best_gt = match best_gt {
-                Some(existing) if existing.col <= position.col => Some(existing),
-                _ => Some(position),
-            };
-        }
-    }
-
-    best_lte.or(best_gt)
 }
 
 fn prev_char_boundary(value: &str, at: usize) -> Option<usize> {
@@ -353,7 +304,7 @@ mod tests {
     fn new_state_is_empty_and_cursor_is_zero() {
         let input = InputBuffer::new();
         assert_eq!(input.text(), "");
-        assert_eq!(input.cursor_byte(), 0);
+        assert_eq!(input.cursor_byte_offset(), 0);
         assert_eq!(input.cursor_text(), "");
     }
 
@@ -364,7 +315,7 @@ mod tests {
         input.insert_char('i');
 
         assert_eq!(input.text(), "hi");
-        assert_eq!(input.cursor_byte(), 2);
+        assert_eq!(input.cursor_byte_offset(), 2);
         assert_eq!(input.cursor_text(), "hi");
     }
 
@@ -376,12 +327,12 @@ mod tests {
         assert!(input.move_left());
         assert!(input.move_left());
         assert!(!input.move_left());
-        assert_eq!(input.cursor_byte(), 0);
+        assert_eq!(input.cursor_byte_offset(), 0);
 
         assert!(input.move_right());
         assert!(input.move_right());
         assert!(!input.move_right());
-        assert_eq!(input.cursor_byte(), 2);
+        assert_eq!(input.cursor_byte_offset(), 2);
     }
 
     #[test]
@@ -416,7 +367,7 @@ mod tests {
 
         assert!(!input.backspace());
         assert_eq!(input.text(), "abc");
-        assert_eq!(input.cursor_byte(), 0);
+        assert_eq!(input.cursor_byte_offset(), 0);
     }
 
     #[test]
@@ -436,12 +387,12 @@ mod tests {
         let mut input = InputBuffer::new();
         input.paste("🙂x");
 
-        assert_eq!(input.cursor_byte(), "🙂x".len());
+        assert_eq!(input.cursor_byte_offset(), "🙂x".len());
         assert!(input.move_left());
         assert_eq!(input.cursor_text(), "🙂");
         assert!(input.backspace());
         assert_eq!(input.text(), "x");
-        assert_eq!(input.cursor_byte(), 0);
+        assert_eq!(input.cursor_byte_offset(), 0);
         assert_eq!(input.cursor_text(), "");
     }
 
@@ -453,7 +404,7 @@ mod tests {
         input.clear();
 
         assert_eq!(input.text(), "");
-        assert_eq!(input.cursor_byte(), 0);
+        assert_eq!(input.cursor_byte_offset(), 0);
         assert_eq!(input.cursor_text(), "");
     }
 
@@ -475,13 +426,14 @@ mod tests {
     fn move_up_and_down_follow_wrapped_rows_without_explicit_newlines() {
         let mut input = InputBuffer::new();
         input.paste("abcdefghij");
-        let end = input.cursor_byte();
+        let end = input.cursor_byte_offset();
 
         assert!(input.move_up(5));
-        let middle = input.cursor_byte();
+        let middle = input.cursor_byte_offset();
         assert!(middle < end);
+
         assert!(input.move_down(5));
-        assert_eq!(input.cursor_byte(), end);
+        assert_eq!(input.cursor_byte_offset(), end);
     }
 
     #[test]
