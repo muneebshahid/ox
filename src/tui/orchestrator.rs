@@ -316,7 +316,7 @@ mod tests {
         );
 
         assert!(!should_exit);
-        assert_eq!(state.transcript(), "hello");
+        assert_eq!(state.output_log(), "hello");
     }
 
     #[test]

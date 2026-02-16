@@ -34,17 +34,17 @@ pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 
 /// Builds the full output payload for this frame.
 ///
 /// Inputs:
-/// - `state`: UI state containing transcript text.
+/// - `state`: UI state containing output log text.
 /// - `meta`: session metadata used by the banner.
 ///
 /// Behavior:
 /// - Starts with banner rows.
-/// - Appends a blank separator and transcript lines when transcript is non-empty.
+/// - Appends a blank separator and output log lines when output log is non-empty.
 /// - Produces styled and plain representations of the same content.
 ///
 /// Example:
-/// - If transcript is empty, output contains only banner rows.
-/// - If transcript is `"hello\nworld"`, output plain lines are:
+/// - If output log is empty, output contains only banner rows.
+/// - If output log is `"hello\nworld"`, output plain lines are:
 ///   - banner rows
 ///   - `""` (separator)
 ///   - `"hello"`
@@ -60,10 +60,10 @@ pub(super) fn height_rows(lines: &[String], width: u16, max_height: u16) -> u16 
 pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputView {
     let (mut lines, mut plain_lines) = build_banner_lines(meta);
 
-    if !state.transcript().is_empty() {
+    if !state.output_log().is_empty() {
         lines.push(Line::from(String::new()));
         plain_lines.push(String::new());
-        for line in state.transcript().split('\n') {
+        for line in state.output_log().split('\n') {
             lines.push(Line::from(line.to_string()));
             plain_lines.push(line.to_string());
         }
@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn output_contains_welcome_metadata_when_transcript_is_empty() {
+    fn output_contains_welcome_metadata_when_output_log_is_empty() {
         let state = TuiState::new();
         let view = build_output_view(&state, &test_meta_with_branch(None));
 
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn output_appends_transcript_after_blank_separator() {
+    fn output_appends_output_log_after_blank_separator() {
         let mut state = TuiState::new();
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello\nworld".to_string()));
 

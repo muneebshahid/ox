@@ -27,7 +27,7 @@ enum RunPhase {
 }
 
 pub struct TuiState {
-    transcript: String,
+    output_log: String,
     status: String,
     input_buffer: InputBuffer,
     input_inner_width: u16,
@@ -41,7 +41,7 @@ pub struct TuiState {
 impl TuiState {
     pub fn new() -> Self {
         Self {
-            transcript: String::new(),
+            output_log: String::new(),
             status: STATUS_IDLE.to_string(),
             input_buffer: InputBuffer::new(),
             input_inner_width: 0,
@@ -53,8 +53,8 @@ impl TuiState {
         }
     }
 
-    pub fn transcript(&self) -> &str {
-        &self.transcript
+    pub fn output_log(&self) -> &str {
+        &self.output_log
     }
 
     pub fn status(&self) -> &str {
@@ -125,13 +125,13 @@ impl TuiState {
                     self.ensure_message_gap();
                 }
                 self.run_phase = RunPhase::Responding;
-                self.transcript.push_str(&delta);
+                self.output_log.push_str(&delta);
             }
             CoreEvent::AgentTurnEnd => {
                 self.close_reasoning_trace();
                 self.stop_running(STATUS_IDLE.to_string());
-                if !self.transcript.ends_with('\n') {
-                    self.transcript.push('\n');
+                if !self.output_log.ends_with('\n') {
+                    self.output_log.push('\n');
                 }
             }
             CoreEvent::AgentToolCallStart {
@@ -142,7 +142,7 @@ impl TuiState {
                     name: tool_name.clone(),
                 };
                 let message = tool_activity::format_tool_start(&tool_name, &args);
-                self.push_transcript_line(&message);
+                self.push_output_log_line(&message);
             }
             CoreEvent::AgentToolCallEnd { .. } => {
                 self.run_phase = RunPhase::Thinking;
@@ -313,16 +313,16 @@ impl TuiState {
 
         if !self.reasoning_trace_open {
             self.ensure_message_gap();
-            self.transcript.push_str("[thinking] ");
+            self.output_log.push_str("[thinking] ");
             self.reasoning_trace_open = true;
         }
-        self.transcript.push_str(delta);
+        self.output_log.push_str(delta);
     }
 
     fn close_reasoning_trace(&mut self) {
         if self.reasoning_trace_open {
-            if !self.transcript.ends_with('\n') {
-                self.transcript.push('\n');
+            if !self.output_log.ends_with('\n') {
+                self.output_log.push('\n');
             }
             self.reasoning_trace_open = false;
         }
@@ -330,25 +330,25 @@ impl TuiState {
 
     fn push_user_message(&mut self, input: &str) {
         self.ensure_message_gap();
-        self.push_transcript_line(&format!("> {input}"));
+        self.push_output_log_line(&format!("> {input}"));
     }
 
-    fn push_transcript_line(&mut self, line: &str) {
-        if !self.transcript.is_empty() && !self.transcript.ends_with('\n') {
-            self.transcript.push('\n');
+    fn push_output_log_line(&mut self, line: &str) {
+        if !self.output_log.is_empty() && !self.output_log.ends_with('\n') {
+            self.output_log.push('\n');
         }
-        self.transcript.push_str(line);
-        self.transcript.push('\n');
+        self.output_log.push_str(line);
+        self.output_log.push('\n');
     }
 
     fn ensure_message_gap(&mut self) {
-        if self.transcript.is_empty() || self.transcript.ends_with("\n\n") {
+        if self.output_log.is_empty() || self.output_log.ends_with("\n\n") {
             return;
         }
-        if self.transcript.ends_with('\n') {
-            self.transcript.push('\n');
+        if self.output_log.ends_with('\n') {
+            self.output_log.push('\n');
         } else {
-            self.transcript.push_str("\n\n");
+            self.output_log.push_str("\n\n");
         }
     }
 
@@ -379,20 +379,20 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta(" world".to_string()));
         state.handle_agent_event(CoreEvent::AgentTurnEnd);
         assert_eq!(state.status(), "Idle");
-        assert_eq!(state.transcript(), "hello world\n");
+        assert_eq!(state.output_log(), "hello world\n");
         assert_eq!(state.input(), "");
         assert!(state.take_dirty());
     }
 
     #[test]
-    fn submit_creates_command_and_echoes_transcript() {
+    fn submit_creates_command_and_echoes_output_log() {
         let mut state = TuiState::new();
         state.handle_ui_action(UiAction::Insert('h'));
         state.handle_ui_action(UiAction::Insert('i'));
 
         let command = state.handle_ui_action(UiAction::Submit);
         assert_eq!(command, StateCommand::Submit("hi".to_string()));
-        assert_eq!(state.transcript(), "> hi\n");
+        assert_eq!(state.output_log(), "> hi\n");
         assert_eq!(state.status(), "Running");
         assert_eq!(state.input(), "");
     }
@@ -425,7 +425,7 @@ mod tests {
             args: r#"{"path":"src/main.rs","offset":10,"limit":5}"#.to_string(),
         });
 
-        assert_eq!(state.transcript(), "[tool] reading src/main.rs:10-14\n");
+        assert_eq!(state.output_log(), "[tool] reading src/main.rs:10-14\n");
     }
 
     #[test]
@@ -457,7 +457,7 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta("final".to_string()));
 
         assert_eq!(
-            state.transcript(),
+            state.output_log(),
             "[thinking] step one + step two\n\nfinal"
         );
     }
@@ -473,7 +473,7 @@ mod tests {
         state.handle_agent_event(CoreEvent::AgentTextDelta("hello".to_string()));
         state.handle_agent_event(CoreEvent::AgentTurnEnd);
 
-        assert_eq!(state.transcript(), "> hi\n\nhello\n");
+        assert_eq!(state.output_log(), "> hi\n\nhello\n");
     }
 
     #[test]
@@ -485,7 +485,7 @@ mod tests {
         state.handle_ui_action(UiAction::Paste("next".to_string()));
         let _ = state.handle_ui_action(UiAction::Submit);
 
-        assert_eq!(state.transcript(), "hello\n\n> next\n");
+        assert_eq!(state.output_log(), "hello\n\n> next\n");
     }
 
     #[test]
