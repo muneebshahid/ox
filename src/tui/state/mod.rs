@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 
 use super::ui_action::UiAction;
 use crate::events::types::CoreEvent;
-use input::InputState;
+use input_buffer::InputBuffer;
 
-pub(super) mod input;
+mod input_buffer;
+mod input_cursor;
 mod tool_activity;
 
 const STATUS_IDLE: &str = "Idle";
@@ -28,7 +29,7 @@ enum RunPhase {
 pub struct TuiState {
     transcript: String,
     status: String,
-    input: InputState,
+    input_buffer: InputBuffer,
     input_inner_width: u16,
     output_scroll_lines_from_bottom: u16,
     dirty: bool,
@@ -42,7 +43,7 @@ impl TuiState {
         Self {
             transcript: String::new(),
             status: STATUS_IDLE.to_string(),
-            input: InputState::new(),
+            input_buffer: InputBuffer::new(),
             input_inner_width: 0,
             output_scroll_lines_from_bottom: 0,
             dirty: true,
@@ -61,11 +62,11 @@ impl TuiState {
     }
 
     pub fn input(&self) -> &str {
-        self.input.text()
+        self.input_buffer.text()
     }
 
     pub(in crate::tui) fn input_cursor_text(&self) -> &str {
-        self.input.cursor_text()
+        self.input_buffer.cursor_text()
     }
 
     pub(in crate::tui) const fn set_input_inner_width(&mut self, width: u16) {
@@ -155,18 +156,20 @@ impl TuiState {
     pub fn handle_ui_action(&mut self, action: UiAction) -> StateCommand {
         match action {
             UiAction::Insert(c) => {
-                self.input.insert_char(c);
+                self.input_buffer.insert_char(c);
                 self.mark_dirty();
                 StateCommand::None
             }
-            UiAction::Backspace => self.finish_input_mutation(InputState::backspace),
-            UiAction::Delete => self.finish_input_mutation(InputState::delete_forward),
+            UiAction::Backspace => self.finish_input_mutation(InputBuffer::backspace),
+            UiAction::Delete => self.finish_input_mutation(InputBuffer::delete_forward),
             UiAction::DeleteToLineStart => {
-                self.finish_input_mutation(InputState::delete_to_line_start)
+                self.finish_input_mutation(InputBuffer::delete_to_line_start)
             }
-            UiAction::DeleteToLineEnd => self.finish_input_mutation(InputState::delete_to_line_end),
-            UiAction::MoveCursorLeft => self.finish_input_mutation(InputState::move_left),
-            UiAction::MoveCursorRight => self.finish_input_mutation(InputState::move_right),
+            UiAction::DeleteToLineEnd => {
+                self.finish_input_mutation(InputBuffer::delete_to_line_end)
+            }
+            UiAction::MoveCursorLeft => self.finish_input_mutation(InputBuffer::move_left),
+            UiAction::MoveCursorRight => self.finish_input_mutation(InputBuffer::move_right),
             UiAction::MoveCursorUp => {
                 let width = self.input_inner_width;
                 self.finish_input_mutation(|input| input.move_up(width))
@@ -175,17 +178,17 @@ impl TuiState {
                 let width = self.input_inner_width;
                 self.finish_input_mutation(|input| input.move_down(width))
             }
-            UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputState::move_word_left),
+            UiAction::MoveCursorWordLeft => self.finish_input_mutation(InputBuffer::move_word_left),
             UiAction::MoveCursorWordRight => {
-                self.finish_input_mutation(InputState::move_word_right)
+                self.finish_input_mutation(InputBuffer::move_word_right)
             }
             UiAction::MoveCursorLineStart => {
-                self.finish_input_mutation(InputState::move_line_start)
+                self.finish_input_mutation(InputBuffer::move_line_start)
             }
-            UiAction::MoveCursorLineEnd => self.finish_input_mutation(InputState::move_line_end),
-            UiAction::DeleteWordLeft => self.finish_input_mutation(InputState::delete_word_left),
+            UiAction::MoveCursorLineEnd => self.finish_input_mutation(InputBuffer::move_line_end),
+            UiAction::DeleteWordLeft => self.finish_input_mutation(InputBuffer::delete_word_left),
             UiAction::Paste(pasted) => {
-                self.input.paste(&pasted);
+                self.input_buffer.paste(&pasted);
                 self.finish_input_edit(!pasted.is_empty())
             }
             UiAction::ScrollUp { lines } => {
@@ -215,15 +218,15 @@ impl TuiState {
 
     fn finish_input_mutation(
         &mut self,
-        mutator: impl FnOnce(&mut InputState) -> bool,
+        mutator: impl FnOnce(&mut InputBuffer) -> bool,
     ) -> StateCommand {
-        let changed = mutator(&mut self.input);
+        let changed = mutator(&mut self.input_buffer);
         self.finish_input_edit(changed)
     }
 
     fn submit_input(&mut self) -> StateCommand {
-        let submitted = self.input.text().trim().to_string();
-        self.input.clear();
+        let submitted = self.input_buffer.text().trim().to_string();
+        self.input_buffer.clear();
         self.mark_dirty();
 
         if submitted.is_empty() {

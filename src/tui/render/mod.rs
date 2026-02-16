@@ -1,4 +1,4 @@
-mod input;
+mod input_pane;
 mod output;
 mod viewport;
 
@@ -76,7 +76,8 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
     let show_status = status_visible(state);
     let status_height_rows = u16::from(show_status);
     let max_input_height_rows = area.height.saturating_sub(status_height_rows);
-    let input_height_rows = input::height_rows(state.input(), area.width, max_input_height_rows);
+    let input_height_rows =
+        input_pane::height_rows(state.input(), area.width, max_input_height_rows);
     let max_output_height_rows = area
         .height
         .saturating_sub(input_height_rows.saturating_add(status_height_rows));
@@ -103,8 +104,8 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut TuiState, meta: &RenderMeta) {
             })
             .width,
     );
-    input::draw_input(frame, state, input_area);
-    input::place_input_cursor(frame, state, input_area);
+    input_pane::draw_input(frame, state, input_area);
+    input_pane::place_input_cursor(frame, state, input_area);
 }
 
 /// Draws the status row.

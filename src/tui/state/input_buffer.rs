@@ -1,12 +1,12 @@
-use crate::tui::input_layout::{self, CursorPosition};
+use super::input_cursor::{self, CursorPosition};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(super) struct InputState {
+pub(super) struct InputBuffer {
     text: String,
     cursor_byte: usize,
 }
 
-impl InputState {
+impl InputBuffer {
     pub(super) fn new() -> Self {
         Self::default()
     }
@@ -153,7 +153,7 @@ impl InputState {
             return false;
         }
 
-        let positions = input_layout::cursor_positions_with_prompt(&self.text, width);
+        let positions = input_cursor::cursor_positions_with_prompt(&self.text, width);
         let Some(current) = positions
             .iter()
             .find(|pos| pos.byte == self.cursor_byte)
@@ -347,11 +347,11 @@ fn char_class(ch: char) -> CharClass {
 
 #[cfg(test)]
 mod tests {
-    use super::InputState;
+    use super::InputBuffer;
 
     #[test]
     fn new_state_is_empty_and_cursor_is_zero() {
-        let input = InputState::new();
+        let input = InputBuffer::new();
         assert_eq!(input.text(), "");
         assert_eq!(input.cursor_byte(), 0);
         assert_eq!(input.cursor_text(), "");
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn insert_char_appends_and_moves_cursor() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.insert_char('h');
         input.insert_char('i');
 
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn move_left_and_right_clamp_at_bounds() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("ab");
 
         assert!(input.move_left());
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn insert_char_respects_cursor_position() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("ac");
         input.move_left();
         input.insert_char('b');
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn backspace_removes_character_before_cursor() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("abc");
         input.move_left();
 
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn backspace_at_start_is_noop() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("abc");
         input.move_left();
         input.move_left();
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn paste_inserts_at_cursor() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("hello");
         input.move_left();
         input.move_left();
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn unicode_navigation_and_backspace_follow_char_boundaries() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("🙂x");
 
         assert_eq!(input.cursor_byte(), "🙂x".len());
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn clear_resets_text_and_cursor() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("hello");
         input.move_left();
         input.clear();
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn move_line_start_and_end_stay_within_current_line() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("ab\ncd\nef");
 
         assert!(input.move_line_start());
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn move_up_and_down_follow_wrapped_rows_without_explicit_newlines() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("abcdefghij");
         let end = input.cursor_byte();
 
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn move_up_and_down_are_noops_when_single_visual_row() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("hello");
 
         assert!(!input.move_up(40));
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn delete_forward_removes_character_at_cursor() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("abdc");
         input.move_left();
         input.move_left();
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn delete_forward_at_end_is_noop() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("abc");
 
         assert!(!input.delete_forward());
@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn delete_to_line_start_and_end_only_affect_current_line() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("ab\ncd\nef");
         input.move_left();
 
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn move_word_left_and_right_jump_by_word_boundaries() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("hello   world, test");
         assert_eq!(input.cursor_text(), "hello   world, test");
 
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn delete_word_left_removes_previous_word_chunk() {
-        let mut input = InputState::new();
+        let mut input = InputBuffer::new();
         input.paste("hello   world test");
         assert!(input.delete_word_left());
         assert_eq!(input.text(), "hello   world ");

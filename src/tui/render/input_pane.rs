@@ -1,4 +1,5 @@
-use crate::tui::{input_layout, state::TuiState};
+use crate::tui::input_metrics;
+use crate::tui::state::TuiState;
 use ratatui::{
     Frame,
     layout::{Margin, Rect},
@@ -6,6 +7,22 @@ use ratatui::{
 };
 
 const INPUT_BORDER_ROWS: u16 = 2;
+
+fn input_display_text(input: &str) -> String {
+    format!("{}{input}", input_metrics::INPUT_PROMPT_PREFIX)
+}
+
+fn wrapped_content_height_with_prompt(input: &str, width: u16, max_rows: u16) -> u16 {
+    if max_rows == 0 {
+        return 0;
+    }
+
+    if width == 0 {
+        return 1.min(max_rows);
+    }
+
+    input_metrics::rendered_row_count(&input_display_text(input), width, max_rows)
+}
 
 /// Draws the input pane (prompt + typed text) at the bottom of the screen.
 ///
@@ -19,9 +36,9 @@ const INPUT_BORDER_ROWS: u16 = 2;
 /// - Renders top and bottom borders.
 /// - Enables wrapping without trimming trailing spaces.
 pub(super) fn draw_input(frame: &mut Frame<'_>, state: &TuiState, area: Rect) {
-    let input = Paragraph::new(input_layout::input_display_text(state.input()))
+    let input = Paragraph::new(input_display_text(state.input()))
         .block(Block::default().borders(Borders::TOP | Borders::BOTTOM))
-        .wrap(input_layout::INPUT_WRAP);
+        .wrap(input_metrics::INPUT_WRAP);
     frame.render_widget(input, area);
 }
 
@@ -43,8 +60,8 @@ pub(super) fn place_input_cursor(frame: &mut Frame<'_>, state: &TuiState, input_
     });
 
     if input_inner.width > 0 && input_inner.height > 0 {
-        let (col, row) = input_layout::cursor_offset_with_prompt(
-            state.input_cursor_text(),
+        let (col, row) = input_metrics::cursor_offset(
+            &input_display_text(state.input_cursor_text()),
             input_inner.width,
             input_inner.height,
         );
@@ -72,8 +89,7 @@ pub(super) fn height_rows(input: &str, width: u16, max_height: u16) -> u16 {
     }
 
     let max_content_height = max_height.saturating_sub(INPUT_BORDER_ROWS);
-    let content_height =
-        input_layout::wrapped_content_height_with_prompt(input, width, max_content_height);
+    let content_height = wrapped_content_height_with_prompt(input, width, max_content_height);
     content_height
         .saturating_add(INPUT_BORDER_ROWS)
         .min(max_height)
