@@ -255,7 +255,7 @@ mod tests {
         ));
         let output = build_output_view(&state, &test_meta_with_branch(None));
         let max_scroll = viewport::max_scroll_offset(&output.plain_lines, 20, 5);
-        let scroll = viewport::scroll_offset(&output.plain_lines, 20, 5, max_scroll);
+        let scroll = viewport::scroll_offset_from_max(max_scroll, max_scroll);
 
         let backend = TestBackend::new(20, 5);
         let mut terminal = Terminal::new(backend).expect("create test terminal");

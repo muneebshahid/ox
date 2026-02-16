@@ -17,10 +17,6 @@ pub(in crate::tui) fn to_ui_action(event: CEvent) -> UiAction {
     }
 }
 
-pub(in crate::tui) const fn is_quit_event(event: &CEvent) -> bool {
-    matches!(event, CEvent::Key(key) if is_quit_key(key))
-}
-
 fn to_ui_action_from_key(key: KeyEvent) -> UiAction {
     if is_quit_key(&key) {
         let action = UiAction::Quit;
@@ -161,7 +157,7 @@ const fn is_quit_key(key: &KeyEvent) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_quit_event, to_ui_action};
+    use super::to_ui_action;
     use crate::tui::ui_action::UiAction;
     use crossterm::event::{
         Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
@@ -295,25 +291,34 @@ mod tests {
     }
 
     #[test]
-    fn quit_event_only_matches_quit_keys() {
-        assert!(is_quit_event(&CEvent::Key(KeyEvent {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })));
-        assert!(is_quit_event(&CEvent::Key(KeyEvent {
-            code: KeyCode::Char('c'),
-            modifiers: KeyModifiers::CONTROL,
-            kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
-        })));
-        assert!(!is_quit_event(&CEvent::Mouse(MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 1,
-            row: 1,
-            modifiers: KeyModifiers::NONE,
-        })));
+    fn maps_quit_keys_to_quit_action() {
+        assert_eq!(
+            to_ui_action(CEvent::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+            UiAction::Quit
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Key(KeyEvent {
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+            UiAction::Quit
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 1,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            })),
+            UiAction::Ignore
+        );
     }
 
     #[test]
@@ -401,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_non_scroll_mouse_and_non_quit_keys_for_quit_check() {
+    fn ignores_non_scroll_mouse_and_non_quit_keys() {
         assert_eq!(
             to_ui_action(CEvent::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -411,6 +416,9 @@ mod tests {
             })),
             UiAction::Ignore
         );
-        assert!(!is_quit_event(&CEvent::Key(key(KeyCode::Char('q')))));
+        assert_eq!(
+            to_ui_action(CEvent::Key(key(KeyCode::Char('q')))),
+            UiAction::Insert('q')
+        );
     }
 }

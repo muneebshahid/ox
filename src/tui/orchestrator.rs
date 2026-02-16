@@ -18,7 +18,7 @@ use super::{
     render_meta::build_render_meta,
     state::{StateCommand, TuiState},
     terminal::UiRenderer,
-    ui_action::{self, UiAction},
+    ui_action,
 };
 
 const REDRAW_INTERVAL_MS: u64 = 33;
@@ -230,20 +230,10 @@ fn handle_input_during_active_turn(
     event_result: Result<CEvent, std::io::Error>,
 ) -> bool {
     match event_result {
-        Ok(event) => {
-            if ui_action::adapter::is_quit_event(&event) {
-                return true;
-            }
-
-            let ui_action = ui_action::adapter::to_ui_action(event);
-            if matches!(
-                &ui_action,
-                UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged
-            ) {
-                let _ = state.handle_ui_action(ui_action);
-            }
-            false
-        }
+        Ok(event) => matches!(
+            state.handle_ui_action_during_active_turn(ui_action::adapter::to_ui_action(event)),
+            StateCommand::Quit
+        ),
         Err(err) => {
             state.handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
             false

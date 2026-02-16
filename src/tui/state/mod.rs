@@ -211,6 +211,35 @@ impl TuiState {
         }
     }
 
+    pub(in crate::tui) fn handle_ui_action_during_active_turn(
+        &mut self,
+        action: UiAction,
+    ) -> StateCommand {
+        match action {
+            UiAction::Quit => StateCommand::Quit,
+            UiAction::ScrollUp { .. } | UiAction::ScrollDown { .. } | UiAction::ViewportChanged => {
+                self.handle_ui_action(action)
+            }
+            UiAction::Insert(_)
+            | UiAction::Backspace
+            | UiAction::Delete
+            | UiAction::MoveCursorLeft
+            | UiAction::MoveCursorRight
+            | UiAction::MoveCursorUp
+            | UiAction::MoveCursorDown
+            | UiAction::MoveCursorWordLeft
+            | UiAction::MoveCursorWordRight
+            | UiAction::MoveCursorLineStart
+            | UiAction::MoveCursorLineEnd
+            | UiAction::DeleteToLineStart
+            | UiAction::DeleteToLineEnd
+            | UiAction::DeleteWordLeft
+            | UiAction::Submit
+            | UiAction::Paste(_)
+            | UiAction::Ignore => StateCommand::None,
+        }
+    }
+
     const fn finish_input_edit(&mut self, changed: bool) -> StateCommand {
         if changed {
             self.mark_dirty();
@@ -604,6 +633,34 @@ mod tests {
         state.handle_ui_action(UiAction::ViewportChanged);
 
         assert!(state.take_dirty());
+    }
+
+    #[test]
+    fn active_turn_policy_allows_scroll_but_ignores_typing() {
+        let mut state = TuiState::new();
+        let _ = state.take_dirty();
+
+        let command = state.handle_ui_action_during_active_turn(UiAction::ScrollUp { lines: 3 });
+        assert_eq!(command, StateCommand::None);
+        assert_eq!(state.output_scroll_lines_from_bottom(), 3);
+        assert!(state.take_dirty());
+
+        let command = state.handle_ui_action_during_active_turn(UiAction::Insert('x'));
+        assert_eq!(command, StateCommand::None);
+        assert_eq!(state.input(), "");
+    }
+
+    #[test]
+    fn active_turn_policy_ignores_submit_and_allows_quit() {
+        let mut state = TuiState::new();
+        state.handle_ui_action(UiAction::Paste("hello".to_string()));
+
+        let submit = state.handle_ui_action_during_active_turn(UiAction::Submit);
+        assert_eq!(submit, StateCommand::None);
+        assert_eq!(state.input(), "hello");
+
+        let quit = state.handle_ui_action_during_active_turn(UiAction::Quit);
+        assert_eq!(quit, StateCommand::Quit);
     }
 
     #[test]

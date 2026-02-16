@@ -23,36 +23,6 @@ pub(super) fn row_height(lines: &[String], width: u16, max_height: u16, fixed_ro
     content_height.saturating_add(fixed_rows).min(max_height)
 }
 
-/// Computes the top-of-buffer scroll offset for the output paragraph.
-///
-/// Inputs:
-/// - `lines`: plain output lines.
-/// - `width`: viewport width in cells used for wrapping.
-/// - `viewport_height`: output viewport height in rows.
-/// - `scroll_lines_from_bottom`: manual scroll distance measured from bottom.
-///
-/// Behavior:
-/// - Computes maximum valid top offset for current content/viewport.
-/// - Converts bottom-relative manual scroll into top offset.
-///
-/// Example:
-/// - `lines = ["abcdefgh", "ij"]`, `width = 4`, `viewport_height = 2`
-/// - Total wrapped lines is `3`, so max top offset is `1`.
-/// - If `scroll_lines_from_bottom = 0`, `scroll_offset = 1` (follow bottom).
-/// - If `scroll_lines_from_bottom = 1`, `scroll_offset = 0` (scroll one line up).
-///
-/// Output:
-/// - Scroll offset (`y`) passed to `Paragraph::scroll`.
-pub(super) fn scroll_offset(
-    lines: &[String],
-    width: u16,
-    viewport_height: u16,
-    scroll_lines_from_bottom: u16,
-) -> u16 {
-    let max_offset = max_scroll_offset(lines, width, viewport_height);
-    scroll_offset_from_max(max_offset, scroll_lines_from_bottom)
-}
-
 /// Converts a bottom-relative manual scroll into a top-of-buffer offset.
 ///
 /// Inputs:
@@ -147,9 +117,7 @@ fn wrapped_line_count(line: &str, width: usize) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        max_scroll_offset, row_height, scroll_offset, scroll_offset_from_max, wrapped_line_count,
-    };
+    use super::{max_scroll_offset, row_height, scroll_offset_from_max, wrapped_line_count};
 
     fn lines(values: &[&str]) -> Vec<String> {
         values.iter().map(|line| (*line).to_string()).collect()
@@ -183,49 +151,55 @@ mod tests {
     }
 
     #[test]
-    fn scroll_offset_is_zero_when_content_fits_viewport() {
+    fn scroll_offset_from_max_is_zero_when_content_fits_viewport() {
         let source = lines(&["abc", "def"]);
-        assert_eq!(scroll_offset(&source, 10, 5, 0), 0);
+        let max = max_scroll_offset(&source, 10, 5);
+        assert_eq!(scroll_offset_from_max(max, 0), 0);
     }
 
     #[test]
-    fn scroll_offset_moves_to_bottom_when_content_overflows() {
+    fn scroll_offset_from_max_moves_to_bottom_when_content_overflows() {
         let source = lines(&["abcd", "efgh", "ijkl"]);
-        assert_eq!(scroll_offset(&source, 2, 3, 0), 3);
+        let max = max_scroll_offset(&source, 2, 3);
+        assert_eq!(scroll_offset_from_max(max, 0), 3);
     }
 
     #[test]
-    fn scroll_offset_changes_when_width_changes() {
+    fn scroll_offset_from_max_changes_when_width_changes() {
         let source = lines(&["abcdefghij"]);
-        let narrow = scroll_offset(&source, 3, 2, 0);
-        let wide = scroll_offset(&source, 10, 2, 0);
+        let narrow = scroll_offset_from_max(max_scroll_offset(&source, 3, 2), 0);
+        let wide = scroll_offset_from_max(max_scroll_offset(&source, 10, 2), 0);
         assert_eq!(narrow, 2);
         assert_eq!(wide, 0);
     }
 
     #[test]
-    fn scroll_offset_returns_zero_for_zero_height_viewport() {
+    fn scroll_offset_from_max_returns_zero_for_zero_height_viewport() {
         let source = lines(&["abcdef"]);
-        assert_eq!(scroll_offset(&source, 3, 0, 0), 0);
+        let max = max_scroll_offset(&source, 3, 0);
+        assert_eq!(scroll_offset_from_max(max, 0), 0);
     }
 
     #[test]
-    fn scroll_offset_saturates_for_large_input() {
+    fn scroll_offset_from_max_saturates_for_large_input() {
         let very_long_line = "x".repeat(usize::from(u16::MAX) * 2);
         let source = vec![very_long_line];
-        assert_eq!(scroll_offset(&source, 1, 1, 0), u16::MAX - 1);
+        let max = max_scroll_offset(&source, 1, 1);
+        assert_eq!(scroll_offset_from_max(max, 0), u16::MAX - 1);
     }
 
     #[test]
-    fn scroll_offset_moves_up_when_manual_scroll_is_set() {
+    fn scroll_offset_from_max_moves_up_when_manual_scroll_is_set() {
         let source = lines(&["abcd", "efgh", "ijkl"]);
-        assert_eq!(scroll_offset(&source, 2, 3, 2), 1);
+        let max = max_scroll_offset(&source, 2, 3);
+        assert_eq!(scroll_offset_from_max(max, 2), 1);
     }
 
     #[test]
-    fn scroll_offset_clamps_to_top_when_manual_scroll_is_larger_than_content() {
+    fn scroll_offset_from_max_clamps_to_top_when_manual_scroll_is_larger_than_content() {
         let source = lines(&["abcd", "efgh", "ijkl"]);
-        assert_eq!(scroll_offset(&source, 2, 3, 99), 0);
+        let max = max_scroll_offset(&source, 2, 3);
+        assert_eq!(scroll_offset_from_max(max, 99), 0);
     }
 
     #[test]
