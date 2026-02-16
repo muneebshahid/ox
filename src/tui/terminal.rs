@@ -95,8 +95,7 @@ impl TerminalGuard {
             state.apply_render_sync(
                 sync.input_inner_width,
                 sync.max_output_scroll_lines_from_bottom,
-                sync.output_viewport,
-                sync.output_cells,
+                sync.output_snapshot,
             );
         }
         Ok(())

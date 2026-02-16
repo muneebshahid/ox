@@ -274,6 +274,7 @@ mod tests {
     use crate::{
         events::{hub::RecvError, types::CoreEvent},
         tui::{
+            output_surface::{OutputRenderSnapshot, OutputViewport},
             state::TuiState,
             ui_action::{self, UiAction},
         },
@@ -366,16 +367,18 @@ mod tests {
         state.apply_render_sync(
             0,
             u16::MAX,
-            crate::tui::state::OutputViewport {
-                x: 0,
-                y: 0,
-                width: 4,
-                height: 2,
+            OutputRenderSnapshot {
+                viewport: OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 4,
+                    height: 2,
+                },
+                cells: vec![
+                    "abcd".chars().map(|ch| ch.to_string()).collect(),
+                    "efgh".chars().map(|ch| ch.to_string()).collect(),
+                ],
             },
-            vec![
-                "abcd".chars().map(|ch| ch.to_string()).collect(),
-                "efgh".chars().map(|ch| ch.to_string()).collect(),
-            ],
         );
 
         let down = CEvent::Mouse(MouseEvent {

@@ -4,7 +4,7 @@ mod viewport;
 
 use std::time::Duration;
 
-use super::state::{OutputViewport, TuiState};
+use super::{output_surface::OutputRenderSnapshot, state::TuiState};
 use output::{build_output_view, draw_output};
 use ratatui::{
     Frame,
@@ -22,8 +22,7 @@ const OX_BADGE_X_COLOR: Color = Color::Cyan;
 pub(super) struct RenderSync {
     pub(super) input_inner_width: u16,
     pub(super) max_output_scroll_lines_from_bottom: u16,
-    pub(super) output_viewport: OutputViewport,
-    pub(super) output_cells: Vec<Vec<String>>,
+    pub(super) output_snapshot: OutputRenderSnapshot,
 }
 
 pub struct RenderMeta {
@@ -127,8 +126,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) -
     RenderSync {
         input_inner_width,
         max_output_scroll_lines_from_bottom,
-        output_viewport: output_render_sync.viewport,
-        output_cells: output_render_sync.cells,
+        output_snapshot: output_render_sync,
     }
 }
 

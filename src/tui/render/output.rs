@@ -1,5 +1,8 @@
 use super::{RenderMeta, viewport};
-use crate::tui::state::{CellPos, OutputViewport, TuiState};
+use crate::tui::{
+    output_surface::{CellPos, OutputRenderSnapshot, OutputViewport},
+    state::TuiState,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -16,11 +19,6 @@ const OUTPUT_FIXED_ROWS: u16 = 0;
 pub(super) struct OutputView {
     pub(super) text: Text<'static>,
     pub(super) plain_lines: Vec<String>,
-}
-
-pub(super) struct OutputRenderSync {
-    pub(super) viewport: OutputViewport,
-    pub(super) cells: Vec<Vec<String>>,
 }
 
 /// Computes output pane height from wrapped output content.
@@ -96,21 +94,21 @@ pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputVi
 /// - Captures rendered output cells for copy-to-clipboard behavior.
 ///
 /// Output:
-/// - `OutputRenderSync` with output viewport and rendered cell content.
+/// - `OutputRenderSnapshot` with output viewport and rendered cell content.
 pub(super) fn draw_output(
     frame: &mut Frame<'_>,
     output: &OutputView,
     area: Rect,
     scroll_offset_top: u16,
     selection_range: Option<(CellPos, CellPos)>,
-) -> OutputRenderSync {
+) -> OutputRenderSnapshot {
     let output = Paragraph::new(output.text.clone())
         .scroll((scroll_offset_top, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(output, area);
 
     highlight_output_selection(frame, area, selection_range);
-    OutputRenderSync {
+    OutputRenderSnapshot {
         viewport: OutputViewport {
             x: area.x,
             y: area.y,

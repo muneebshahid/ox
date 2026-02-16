@@ -1,7 +1,10 @@
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
-use super::ui_action::UiAction;
+use super::{
+    output_surface::{CellPos, OutputRenderSnapshot, OutputViewport},
+    ui_action::UiAction,
+};
 use crate::events::types::CoreEvent;
 use input_buffer::InputBuffer;
 
@@ -27,20 +30,6 @@ enum RunPhase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) struct OutputViewport {
-    pub(in crate::tui) x: u16,
-    pub(in crate::tui) y: u16,
-    pub(in crate::tui) width: u16,
-    pub(in crate::tui) height: u16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) struct CellPos {
-    pub(in crate::tui) col: u16,
-    pub(in crate::tui) row: u16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OutputSelection {
     anchor: CellPos,
     focus: CellPos,
@@ -63,12 +52,11 @@ impl InputState {
 }
 
 struct OutputState {
-    log: String,                        // Append-only output log shown in the output pane.
-    scroll_lines_from_bottom: u16,      // Manual scroll distance measured from bottom.
-    reasoning_trace_open: bool,         // Whether `[thinking]` trace is currently open.
-    viewport: Option<OutputViewport>,   // Last rendered output viewport in terminal coordinates.
-    cells: Vec<Vec<String>>, // Last rendered output cells for copy-to-clipboard extraction.
-    selection: Option<OutputSelection>, // Active or completed output selection state.
+    log: String,                   // Append-only output log shown in the output pane.
+    scroll_lines_from_bottom: u16, // Manual scroll distance measured from bottom.
+    reasoning_trace_open: bool,    // Whether `[thinking]` trace is currently open.
+    render_snapshot: Option<OutputRenderSnapshot>, // Last rendered output snapshot for selection/copy.
+    selection: Option<OutputSelection>,            // Active or completed output selection state.
 }
 
 impl OutputState {
@@ -77,8 +65,7 @@ impl OutputState {
             log: String::new(),
             scroll_lines_from_bottom: 0,
             reasoning_trace_open: false,
-            viewport: None,
-            cells: Vec::new(),
+            render_snapshot: None,
             selection: None,
         }
     }
@@ -166,7 +153,10 @@ impl TuiState {
         }
 
         let (start, end) = self.output_selection_range()?;
-        let text = build_selected_text(&self.output.cells, start, end)?;
+        let text = {
+            let snapshot = self.output.render_snapshot.as_ref()?;
+            build_selected_text(&snapshot.cells, start, end)?
+        };
         self.output.selection = Some(OutputSelection {
             pending_copy: false,
             ..selection
@@ -182,16 +172,14 @@ impl TuiState {
         &mut self,
         input_inner_width: u16,
         max_scroll_lines_from_bottom: u16,
-        output_viewport: OutputViewport,
-        output_cells: Vec<Vec<String>>,
+        output_snapshot: OutputRenderSnapshot,
     ) {
         self.input.inner_width = input_inner_width;
         self.output.scroll_lines_from_bottom = self
             .output
             .scroll_lines_from_bottom
             .min(max_scroll_lines_from_bottom);
-        self.output.viewport = Some(output_viewport);
-        self.output.cells = output_cells;
+        self.output.render_snapshot = Some(output_snapshot);
     }
 
     pub fn status_is_running(&self) -> bool {
@@ -402,9 +390,10 @@ impl TuiState {
     }
 
     const fn begin_output_selection(&mut self, col: u16, row: u16) {
-        let Some(viewport) = self.output.viewport else {
+        let Some(snapshot) = self.output.render_snapshot.as_ref() else {
             return;
         };
+        let viewport = snapshot.viewport;
         let Some(relative) = relative_cell_in_viewport(viewport, col, row) else {
             if self.output.selection.is_some() {
                 self.output.selection = None;
@@ -423,9 +412,10 @@ impl TuiState {
     }
 
     const fn update_output_selection(&mut self, col: u16, row: u16) {
-        let Some(viewport) = self.output.viewport else {
+        let Some(snapshot) = self.output.render_snapshot.as_ref() else {
             return;
         };
+        let viewport = snapshot.viewport;
         let Some(selection) = self.output.selection else {
             return;
         };
@@ -646,9 +636,22 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{OutputViewport, StateCommand, TuiState, truncate_preview};
+    use super::{StateCommand, TuiState, truncate_preview};
     use crate::events::types::CoreEvent;
-    use crate::tui::ui_action::UiAction;
+    use crate::tui::{
+        output_surface::{OutputRenderSnapshot, OutputViewport},
+        ui_action::UiAction,
+    };
+
+    fn render_snapshot(viewport: OutputViewport, rows: &[&str]) -> OutputRenderSnapshot {
+        OutputRenderSnapshot {
+            viewport,
+            cells: rows
+                .iter()
+                .map(|row| row.chars().map(|ch| ch.to_string()).collect())
+                .collect(),
+        }
+    }
 
     #[test]
     fn appends_deltas_and_updates_status() {
@@ -825,13 +828,15 @@ mod tests {
         state.apply_render_sync(
             5,
             u16::MAX,
-            OutputViewport {
-                x: 0,
-                y: 0,
-                width: 10,
-                height: 2,
-            },
-            Vec::new(),
+            render_snapshot(
+                OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 10,
+                    height: 2,
+                },
+                &[],
+            ),
         );
         state.handle_ui_action(UiAction::Paste("abcdefghij".to_string()));
         let end_len = state.input_cursor_text().len();
@@ -850,17 +855,15 @@ mod tests {
         state.apply_render_sync(
             0,
             u16::MAX,
-            OutputViewport {
-                x: 10,
-                y: 4,
-                width: 6,
-                height: 3,
-            },
-            vec![
-                "ABCDEF".chars().map(|ch| ch.to_string()).collect(),
-                "GHIJKL".chars().map(|ch| ch.to_string()).collect(),
-                "MNOPQR".chars().map(|ch| ch.to_string()).collect(),
-            ],
+            render_snapshot(
+                OutputViewport {
+                    x: 10,
+                    y: 4,
+                    width: 6,
+                    height: 3,
+                },
+                &["ABCDEF", "GHIJKL", "MNOPQR"],
+            ),
         );
 
         state.handle_ui_action(UiAction::OutputSelectStart { col: 11, row: 4 });
@@ -880,16 +883,15 @@ mod tests {
         state.apply_render_sync(
             0,
             u16::MAX,
-            OutputViewport {
-                x: 0,
-                y: 0,
-                width: 5,
-                height: 2,
-            },
-            vec![
-                "abcde".chars().map(|ch| ch.to_string()).collect(),
-                "fghij".chars().map(|ch| ch.to_string()).collect(),
-            ],
+            render_snapshot(
+                OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 5,
+                    height: 2,
+                },
+                &["abcde", "fghij"],
+            ),
         );
 
         state.handle_ui_action(UiAction::OutputSelectStart { col: 2, row: 1 });
@@ -1012,16 +1014,15 @@ mod tests {
         state.apply_render_sync(
             0,
             u16::MAX,
-            OutputViewport {
-                x: 0,
-                y: 0,
-                width: 4,
-                height: 2,
-            },
-            vec![
-                "abcd".chars().map(|ch| ch.to_string()).collect(),
-                "efgh".chars().map(|ch| ch.to_string()).collect(),
-            ],
+            render_snapshot(
+                OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 4,
+                    height: 2,
+                },
+                &["abcd", "efgh"],
+            ),
         );
 
         let start = state
@@ -1045,13 +1046,15 @@ mod tests {
         state.apply_render_sync(
             0,
             5,
-            OutputViewport {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
-            Vec::new(),
+            render_snapshot(
+                OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                },
+                &[],
+            ),
         );
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
