@@ -6,37 +6,31 @@ flowchart TD
     B --> C{"Event Kind?"}
 
     C -->|Terminal Input| D["Adapter: CEvent -> UiAction"]
-    C -->|Core Event| E["Dispatch Core Event to Components"]
-    C -->|Tick/Interrupt/Resize| F["Create Internal Action/Effect"]
+    C -->|Core Event| E["state.handle_agent_event(CoreEvent)"]
+    C -->|Tick or Interrupt| F["No-op or shutdown path"]
 
-    D --> G["Router/Policy Layer (mode-aware)"]
-    G -.-> G1["Policy: ActiveTurn allows typing/editing/scroll/select/quit, blocks Submit"]
-    G --> H{"Action Allowed?"}
-    H -->|No| I["No-op (or Ignore)"]
-    H -->|Yes| J["Dispatch UiAction to Target Component(s)"]
+    D --> G["Router and Policy Layer"]
+    G -.-> G1["Active-turn policy: allows typing/editing/scroll/select/quit, blocks submit"]
+    G --> H{"Allowed?"}
+    H -->|No| M["Ignore action"]
+    H -->|Yes| I["renderer.sync_layout_context(state)"]
+    I --> J["state.handle_ui_action(action)"]
+    J --> K{"StateCommand"}
+    K -->|Submit| L["run_active_turn(agent::run)"]
+    K -->|Quit| Z["Exit loop"]
+    K -->|None| M
 
-    E --> K["Component Mutation + Effect(s)"]
-    F --> K
-    J --> K
-    I --> M["End-of-Loop Draw Decision"]
-
-    K --> L["Accumulate: dirty flag + effect queue"]
+    E --> M
+    F --> M
     L --> M
 
-    M --> N{"draw_if_needed?"}
-    N -->|No| A
-    N -->|Yes| O["Render Phase (RenderCtx/LayoutCtx)"]
-
-    O --> P["output.render + status.render + input.render"]
-    P --> Q["Render Artifact: OutputRenderSnapshot"]
-    Q --> R["state.apply_render_sync(...)"]
-
-    R --> S["Post-Render Effect Handling"]
-    S --> T{"Pending Copy Text?"}
-    T -->|Yes| U["Clipboard Side Effect"]
-    T -->|No| V["Skip Copy"]
-
-    U --> W["Process Remaining Effects (Submit/Quit/etc.)"]
-    V --> W
-    W --> A
+    M --> N["renderer.draw_if_needed(state)"]
+    N --> O{"Should draw?"}
+    O -->|No| A
+    O -->|Yes| P["Render: output + status + input"]
+    P --> Q["Capture OutputRenderSnapshot"]
+    Q --> R{"Pending selection copy range?"}
+    R -->|Yes| S["Extract selected text from snapshot and copy to clipboard"]
+    R -->|No| A
+    S --> A
 ```
