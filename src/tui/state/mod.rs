@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{
     output_surface::{CellPos, OutputViewport},
@@ -7,122 +6,24 @@ use super::{
 };
 use crate::events::types::CoreEvent;
 use input_buffer::InputBuffer;
+use input_state::InputState;
+pub(in crate::tui) use layout_context::LayoutContext;
+use output_state::{OutputSelection, OutputState};
+use status_state::{RunPhase, StatusState};
 
 mod input_buffer;
 mod input_cursor;
+mod input_state;
+mod layout_context;
+mod output_state;
+mod status_state;
 mod tool_activity;
-
-const STATUS_IDLE: &str = "Idle";
-const STATUS_RUNNING: &str = "Running";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StateCommand {
     None,
     Submit(String),
     Quit,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RunPhase {
-    Thinking,
-    Responding,
-    Tool { name: String },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct OutputSelection {
-    anchor: CellPos,
-    focus: CellPos,
-    selecting: bool,
-    pending_copy: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) struct LayoutContext {
-    input_inner_width: u16,
-    max_output_scroll_lines_from_bottom: u16,
-    output_viewport: OutputViewport,
-}
-
-impl LayoutContext {
-    pub(in crate::tui) const fn new(
-        input_inner_width: u16,
-        max_output_scroll_lines_from_bottom: u16,
-        output_viewport: OutputViewport,
-    ) -> Self {
-        Self {
-            input_inner_width,
-            max_output_scroll_lines_from_bottom,
-            output_viewport,
-        }
-    }
-
-    pub(in crate::tui) const fn empty() -> Self {
-        Self {
-            input_inner_width: 0,
-            max_output_scroll_lines_from_bottom: 0,
-            output_viewport: OutputViewport {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
-        }
-    }
-}
-
-struct InputState {
-    buffer: InputBuffer, // Editable input text and cursor byte-offset state.
-}
-
-impl InputState {
-    fn new() -> Self {
-        Self {
-            buffer: InputBuffer::new(),
-        }
-    }
-}
-
-struct OutputState {
-    log: String,                        // Append-only output log shown in the output pane.
-    scroll_lines_from_bottom: u16,      // Manual scroll distance measured from bottom.
-    reasoning_trace_open: bool,         // Whether `[thinking]` trace is currently open.
-    selection: Option<OutputSelection>, // Active or completed output selection state.
-}
-
-impl OutputState {
-    const fn new() -> Self {
-        Self {
-            log: String::new(),
-            scroll_lines_from_bottom: 0,
-            reasoning_trace_open: false,
-            selection: None,
-        }
-    }
-}
-
-struct StatusState {
-    text: String, // Status row text (for example `Idle`, `Running`, or error text).
-    running_started_at: Option<Instant>, // Start time for current running status.
-    run_phase: RunPhase, // Current running phase label shown in status.
-}
-
-impl StatusState {
-    fn new() -> Self {
-        Self {
-            text: STATUS_IDLE.to_string(),
-            running_started_at: None,
-            run_phase: RunPhase::Thinking,
-        }
-    }
-
-    fn is_running(&self) -> bool {
-        self.text == STATUS_RUNNING
-    }
-
-    fn is_visible(&self) -> bool {
-        self.text != STATUS_IDLE
-    }
 }
 
 pub struct TuiState {
@@ -212,22 +113,12 @@ impl TuiState {
         self.status.is_visible()
     }
 
-    pub fn running_phase_label(&self) -> Cow<'_, str> {
-        match &self.status.run_phase {
-            RunPhase::Thinking => Cow::Borrowed("Thinking"),
-            RunPhase::Responding => Cow::Borrowed("Responding"),
-            RunPhase::Tool { name } if name.is_empty() => Cow::Borrowed("Running tool"),
-            RunPhase::Tool { name } => {
-                Cow::Owned(format!("Running {}", truncate_preview(name, 24)))
-            }
-        }
+    pub fn running_phase_label(&self) -> std::borrow::Cow<'_, str> {
+        self.status.running_phase_label()
     }
 
     pub fn running_elapsed(&self) -> Duration {
-        self.status
-            .running_started_at
-            .as_ref()
-            .map_or(Duration::ZERO, Instant::elapsed)
+        self.status.running_elapsed()
     }
 
     pub fn take_dirty(&mut self) -> bool {
@@ -254,7 +145,7 @@ impl TuiState {
             }
             CoreEvent::AgentTurnEnd => {
                 self.close_reasoning_trace();
-                self.stop_running(STATUS_IDLE.to_string());
+                self.stop_running("Idle".to_string());
                 if !self.output.log.ends_with('\n') {
                     self.output.log.push('\n');
                 }
@@ -451,17 +342,11 @@ impl TuiState {
     }
 
     fn set_running_status(&mut self) {
-        if self.status.running_started_at.is_none() {
-            self.status.running_started_at = Some(Instant::now());
-        }
-        self.status.text = STATUS_RUNNING.to_string();
-        self.status.run_phase = RunPhase::Thinking;
+        self.status.set_running();
     }
 
     fn stop_running(&mut self, status: String) {
-        self.status.text = status;
-        self.status.running_started_at = None;
-        self.status.run_phase = RunPhase::Thinking;
+        self.status.stop_running(status);
     }
 
     fn append_reasoning_delta(&mut self, delta: &str) {
@@ -562,17 +447,9 @@ const fn clamp_to_viewport(viewport: OutputViewport, col: u16, row: u16) -> Cell
     }
 }
 
-fn truncate_preview(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let truncated: String = value.chars().take(max_chars).collect();
-    format!("{truncated}...")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{LayoutContext, StateCommand, TuiState, truncate_preview};
+    use super::{LayoutContext, StateCommand, TuiState};
     use crate::events::types::CoreEvent;
     use crate::tui::{
         output_surface::{CellPos, OutputViewport},
@@ -965,12 +842,6 @@ mod tests {
         );
 
         assert_eq!(state.output_scroll_lines_from_bottom(), 5);
-    }
-
-    #[test]
-    fn truncate_preview_appends_ellipsis_when_exceeding_limit() {
-        assert_eq!(truncate_preview("hello", 5), "hello");
-        assert_eq!(truncate_preview("hello world", 5), "hello...");
     }
 
     #[test]
