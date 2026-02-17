@@ -50,20 +50,34 @@ fn run_command_with_stdin(program: &str, args: &[&str], input: &str) -> io::Resu
         .stderr(Stdio::null())
         .spawn()?;
 
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| io::Error::other("clipboard command stdin unavailable"))?;
-    stdin.write_all(input.as_bytes())?;
-    drop(stdin);
+    let stdin_result = (|| -> io::Result<()> {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("clipboard command stdin unavailable"))?;
+        stdin.write_all(input.as_bytes())?;
+        drop(stdin);
+        Ok(())
+    })();
 
-    let status = child.wait()?;
-    if status.success() {
-        return Ok(());
+    let wait_result = child.wait();
+    if let Err(write_err) = stdin_result {
+        if let Err(wait_err) = wait_result {
+            return Err(io::Error::other(format!(
+                "clipboard command {program} write failed: {write_err}; wait failed: {wait_err}"
+            )));
+        }
+        return Err(write_err);
     }
-    Err(io::Error::other(format!(
-        "clipboard command {program} failed with {status}"
-    )))
+
+    let status = wait_result?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "clipboard command {program} failed with {status}"
+        )))
+    }
 }
 
 fn copy_osc52(text: &str) -> io::Result<()> {
