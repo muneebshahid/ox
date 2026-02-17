@@ -129,7 +129,7 @@ impl TuiState {
         match event {
             CoreEvent::ShutdownRequested | CoreEvent::Tick => return,
             CoreEvent::AgentTurnStart => {
-                self.set_running_status();
+                self.status.set_running();
             }
             CoreEvent::AgentReasoningDelta(delta) => {
                 self.status.run_phase = RunPhase::Thinking;
@@ -145,7 +145,7 @@ impl TuiState {
             }
             CoreEvent::AgentTurnEnd => {
                 self.close_reasoning_trace();
-                self.stop_running("Idle".to_string());
+                self.status.set_idle();
                 if !self.output.log.ends_with('\n') {
                     self.output.log.push('\n');
                 }
@@ -165,7 +165,7 @@ impl TuiState {
             }
             CoreEvent::Error(message) => {
                 self.close_reasoning_trace();
-                self.stop_running(message);
+                self.status.stop_running(message);
             }
         }
         self.mark_dirty();
@@ -268,7 +268,7 @@ impl TuiState {
 
         self.output.scroll_lines_from_bottom = 0;
         self.push_user_message(&submitted);
-        self.set_running_status();
+        self.status.set_running();
         self.mark_dirty();
         StateCommand::Submit(submitted)
     }
@@ -339,14 +339,6 @@ impl TuiState {
             ..selection
         });
         self.mark_dirty();
-    }
-
-    fn set_running_status(&mut self) {
-        self.status.set_running();
-    }
-
-    fn stop_running(&mut self, status: String) {
-        self.status.stop_running(status);
     }
 
     fn append_reasoning_delta(&mut self, delta: &str) {

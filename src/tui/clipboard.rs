@@ -50,33 +50,26 @@ fn run_command_with_stdin(program: &str, args: &[&str], input: &str) -> io::Resu
         .stderr(Stdio::null())
         .spawn()?;
 
-    let stdin_result = (|| -> io::Result<()> {
+    let write_result = (|| -> io::Result<()> {
         let mut stdin = child
             .stdin
             .take()
             .ok_or_else(|| io::Error::other("clipboard command stdin unavailable"))?;
         stdin.write_all(input.as_bytes())?;
-        drop(stdin);
         Ok(())
     })();
 
     let wait_result = child.wait();
-    if let Err(write_err) = stdin_result {
-        if let Err(wait_err) = wait_result {
-            return Err(io::Error::other(format!(
-                "clipboard command {program} write failed: {write_err}; wait failed: {wait_err}"
-            )));
-        }
-        return Err(write_err);
-    }
-
-    let status = wait_result?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!(
+    match (write_result, wait_result) {
+        (Err(write_err), Err(wait_err)) => Err(io::Error::other(format!(
+            "clipboard command {program} write failed: {write_err}; wait failed: {wait_err}"
+        ))),
+        (Err(write_err), Ok(_)) => Err(write_err),
+        (Ok(()), Err(wait_err)) => Err(wait_err),
+        (Ok(()), Ok(status)) if status.success() => Ok(()),
+        (Ok(()), Ok(status)) => Err(io::Error::other(format!(
             "clipboard command {program} failed with {status}"
-        )))
+        ))),
     }
 }
 

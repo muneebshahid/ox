@@ -50,6 +50,10 @@ impl StatusState {
         self.run_phase = RunPhase::Thinking;
     }
 
+    pub(super) fn set_idle(&mut self) {
+        self.stop_running(STATUS_IDLE.to_string());
+    }
+
     pub(super) fn running_phase_label(&self) -> Cow<'_, str> {
         match &self.run_phase {
             RunPhase::Thinking => Cow::Borrowed("Thinking"),
