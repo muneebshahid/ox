@@ -118,9 +118,11 @@ async fn handle_main_input_event(
     };
 
     let command = match event_result {
-        Ok(event) => ui
-            .state
-            .handle_ui_action(ui_action::adapter::to_ui_action(event)),
+        Ok(event) => {
+            ui.renderer.sync_layout_context(&mut ui.state)?;
+            ui.state
+                .handle_ui_action(ui_action::adapter::to_ui_action(event))
+        }
         Err(err) => {
             ui.state
                 .handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
@@ -195,7 +197,7 @@ async fn run_active_turn(
                     continue;
                 };
                 let should_exit_from_input =
-                    process_active_turn_input_burst(ui, event_result);
+                    process_active_turn_input_burst(ui, event_result)?;
                 if should_exit_from_input {
                     should_exit = true;
                 }
@@ -251,28 +253,30 @@ fn handle_input_during_active_turn(
 fn process_active_turn_input_burst(
     ui: &mut UiRuntime,
     event_result: Result<CEvent, std::io::Error>,
-) -> bool {
+) -> Result<bool> {
+    ui.renderer.sync_layout_context(&mut ui.state)?;
     if handle_input_during_active_turn(&mut ui.state, event_result) {
-        return true;
+        return Ok(true);
     }
 
     drain_pending_active_turn_input_events(ui)
 }
 
-fn drain_pending_active_turn_input_events(ui: &mut UiRuntime) -> bool {
+fn drain_pending_active_turn_input_events(ui: &mut UiRuntime) -> Result<bool> {
     for _ in 0..MAX_DRAINED_INPUT_EVENTS_PER_LOOP {
         let Some(ready_event) = ui.input_events.next().now_or_never() else {
             break;
         };
         let Some(event_result) = ready_event else {
-            return true;
+            return Ok(true);
         };
+        ui.renderer.sync_layout_context(&mut ui.state)?;
         if handle_input_during_active_turn(&mut ui.state, event_result) {
-            return true;
+            return Ok(true);
         }
     }
 
-    false
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -281,8 +285,8 @@ mod tests {
     use crate::{
         events::{hub::RecvError, types::CoreEvent},
         tui::{
-            output_surface::{OutputRenderSnapshot, OutputViewport},
-            state::TuiState,
+            output_surface::{CellPos, OutputViewport},
+            state::{LayoutContext, TuiState},
             ui_action::{self, UiAction},
         },
     };
@@ -298,6 +302,19 @@ mod tests {
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }
+    }
+
+    fn set_layout(
+        state: &mut TuiState,
+        input_inner_width: u16,
+        max_output_scroll_lines_from_bottom: u16,
+        output_viewport: OutputViewport,
+    ) {
+        state.set_layout_context(LayoutContext::new(
+            input_inner_width,
+            max_output_scroll_lines_from_bottom,
+            output_viewport,
+        ));
     }
 
     #[test]
@@ -347,6 +364,17 @@ mod tests {
     #[test]
     fn active_turn_allows_scroll_selection_viewport_and_typing() {
         let mut state = TuiState::new();
+        set_layout(
+            &mut state,
+            80,
+            u16::MAX,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 10,
+            },
+        );
         let _ = state.take_dirty();
         let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
         assert_eq!(state.output_scroll_lines_from_bottom(), 8);
@@ -371,6 +399,17 @@ mod tests {
     #[test]
     fn active_turn_blocks_submit_while_preserving_input() {
         let mut state = TuiState::new();
+        set_layout(
+            &mut state,
+            80,
+            u16::MAX,
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 10,
+            },
+        );
         let _ = handle_input_during_active_turn(
             &mut state,
             Ok(CEvent::Key(KeyEvent {
@@ -396,20 +435,15 @@ mod tests {
     #[test]
     fn active_turn_allows_output_selection_actions() {
         let mut state = TuiState::new();
-        state.apply_render_sync(
+        set_layout(
+            &mut state,
             0,
             u16::MAX,
-            OutputRenderSnapshot {
-                viewport: OutputViewport {
-                    x: 0,
-                    y: 0,
-                    width: 4,
-                    height: 2,
-                },
-                cells: vec![
-                    "abcd".chars().map(|ch| ch.to_string()).collect(),
-                    "efgh".chars().map(|ch| ch.to_string()).collect(),
-                ],
+            OutputViewport {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 2,
             },
         );
 
@@ -435,7 +469,10 @@ mod tests {
         assert!(!handle_input_during_active_turn(&mut state, Ok(down)));
         assert!(!handle_input_during_active_turn(&mut state, Ok(drag)));
         assert!(!handle_input_during_active_turn(&mut state, Ok(up)));
-        assert_eq!(state.take_pending_copy_text(), Some("bcd\nefg".to_string()));
+        assert_eq!(
+            state.take_pending_copy_range(),
+            Some((CellPos { col: 1, row: 0 }, CellPos { col: 2, row: 1 }))
+        );
     }
 
     #[test]

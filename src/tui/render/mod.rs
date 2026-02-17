@@ -4,7 +4,10 @@ mod viewport;
 
 use std::time::Duration;
 
-use super::{output_surface::OutputRenderSnapshot, state::TuiState};
+use super::{
+    output_surface::{OutputRenderSnapshot, OutputViewport},
+    state::{LayoutContext, TuiState},
+};
 use output::{build_output_view, draw_output};
 use ratatui::{
     Frame,
@@ -19,10 +22,14 @@ const OX_BADGE_BRACKET_COLOR: Color = Color::Yellow;
 const OX_BADGE_O_COLOR: Color = Color::Red;
 const OX_BADGE_X_COLOR: Color = Color::Cyan;
 
-pub(super) struct RenderSync {
-    pub(super) input_inner_width: u16,
-    pub(super) max_output_scroll_lines_from_bottom: u16,
-    pub(super) output_snapshot: OutputRenderSnapshot,
+struct RenderPlan {
+    output: output::OutputView,
+    output_area: Rect,
+    status_area: Rect,
+    input_area: Rect,
+    output_scroll_top: u16,
+    max_output_scroll_lines_from_bottom: u16,
+    input_inner_width: u16,
 }
 
 pub struct RenderMeta {
@@ -75,59 +82,41 @@ impl RenderMeta {
 /// - Draws output text, optional running status line, input box, and cursor.
 ///
 /// Output:
-/// - `RenderSync` values that state owners apply after draw.
-pub(super) fn draw(frame: &mut Frame<'_>, state: &TuiState, meta: &RenderMeta) -> RenderSync {
-    let area = frame.area();
-    let output = build_output_view(state, meta);
-    let show_status = state.status_row_visible();
-    let status_height_rows = u16::from(show_status);
-    let max_input_height_rows = area.height.saturating_sub(status_height_rows);
-    let input_height_rows =
-        input_pane::height_rows(state.input(), area.width, max_input_height_rows);
-    let max_output_height_rows = area
-        .height
-        .saturating_sub(input_height_rows.saturating_add(status_height_rows));
-    let output_height_rows =
-        output::height_rows(&output.plain_lines, area.width, max_output_height_rows);
-
-    let [output_area, status_area, input_area, _rest] = Layout::vertical([
-        Constraint::Length(output_height_rows),
-        Constraint::Length(status_height_rows),
-        Constraint::Length(input_height_rows),
-        Constraint::Min(0),
-    ])
-    .areas(area);
-
-    let max_output_scroll_lines_from_bottom =
-        viewport::max_scroll_offset(&output.plain_lines, output_area.width, output_area.height);
-    let output_scroll_top = viewport::scroll_offset_from_max(
-        max_output_scroll_lines_from_bottom,
-        state.output_scroll_lines_from_bottom(),
-    );
-    let output_render_sync = draw_output(
+/// - Rendered output snapshot used for clipboard selection extraction.
+pub(super) fn draw(
+    frame: &mut Frame<'_>,
+    state: &TuiState,
+    meta: &RenderMeta,
+) -> OutputRenderSnapshot {
+    let plan = build_render_plan(frame.area(), state, meta);
+    let output_snapshot = draw_output(
         frame,
-        &output,
-        output_area,
-        output_scroll_top,
+        &plan.output,
+        plan.output_area,
+        plan.output_scroll_top,
         state.output_selection_range(),
     );
-    if show_status {
-        draw_status(frame, state, status_area);
+    if state.status_row_visible() {
+        draw_status(frame, state, plan.status_area);
     }
-    let input_inner_width = input_area
-        .inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        })
-        .width;
-    input_pane::draw_input(frame, state, input_area);
-    input_pane::place_input_cursor(frame, state, input_area);
+    input_pane::draw_input(frame, state, plan.input_area);
+    input_pane::place_input_cursor(frame, state, plan.input_area);
 
-    RenderSync {
-        input_inner_width,
-        max_output_scroll_lines_from_bottom,
-        output_snapshot: output_render_sync,
-    }
+    output_snapshot
+}
+
+pub(super) fn layout_context(state: &TuiState, meta: &RenderMeta, area: Rect) -> LayoutContext {
+    let plan = build_render_plan(area, state, meta);
+    LayoutContext::new(
+        plan.input_inner_width,
+        plan.max_output_scroll_lines_from_bottom,
+        OutputViewport {
+            x: plan.output_area.x,
+            y: plan.output_area.y,
+            width: plan.output_area.width,
+            height: plan.output_area.height,
+        },
+    )
 }
 
 /// Draws the status row.
@@ -185,6 +174,51 @@ fn running_status_line(elapsed: Duration, phase: &str) -> Line<'static> {
         Span::styled("]", bracket_style),
         Span::raw(format!(" {phase} ({elapsed_seconds}s)")),
     ])
+}
+
+fn build_render_plan(area: Rect, state: &TuiState, meta: &RenderMeta) -> RenderPlan {
+    let output = build_output_view(state, meta);
+    let show_status = state.status_row_visible();
+    let status_height_rows = u16::from(show_status);
+    let max_input_height_rows = area.height.saturating_sub(status_height_rows);
+    let input_height_rows =
+        input_pane::height_rows(state.input(), area.width, max_input_height_rows);
+    let max_output_height_rows = area
+        .height
+        .saturating_sub(input_height_rows.saturating_add(status_height_rows));
+    let output_height_rows =
+        output::height_rows(&output.plain_lines, area.width, max_output_height_rows);
+
+    let [output_area, status_area, input_area, _rest] = Layout::vertical([
+        Constraint::Length(output_height_rows),
+        Constraint::Length(status_height_rows),
+        Constraint::Length(input_height_rows),
+        Constraint::Min(0),
+    ])
+    .areas(area);
+
+    let max_output_scroll_lines_from_bottom =
+        viewport::max_scroll_offset(&output.plain_lines, output_area.width, output_area.height);
+    let output_scroll_top = viewport::scroll_offset_from_max(
+        max_output_scroll_lines_from_bottom,
+        state.output_scroll_lines_from_bottom(),
+    );
+    let input_inner_width = input_area
+        .inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        })
+        .width;
+
+    RenderPlan {
+        output,
+        output_area,
+        status_area,
+        input_area,
+        output_scroll_top,
+        max_output_scroll_lines_from_bottom,
+        input_inner_width,
+    }
 }
 
 #[cfg(test)]
