@@ -1,5 +1,8 @@
 use super::{RenderMeta, viewport};
-use crate::tui::state::TuiState;
+use crate::tui::{
+    output_surface::{CellPos, OutputRenderSnapshot, OutputViewport},
+    state::TuiState,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -83,22 +86,88 @@ pub(super) fn build_output_view(state: &TuiState, meta: &RenderMeta) -> OutputVi
 /// - `output`: prebuilt styled/plain output content.
 /// - `area`: output pane rectangle from layout.
 /// - `scroll_offset_top`: precomputed top-of-buffer offset for paragraph scroll.
+/// - `selection_range`: optional selected range in output-relative coordinates.
 ///
 /// Behavior:
 /// - Draws wrapped paragraph content into `area`.
+/// - Highlights selected cells when a selection range is present.
+/// - Captures rendered output cells for copy-to-clipboard behavior.
 ///
 /// Output:
-/// - No return value; writes widgets into `frame`.
+/// - `OutputRenderSnapshot` with output viewport and rendered cell content.
 pub(super) fn draw_output(
     frame: &mut Frame<'_>,
     output: &OutputView,
     area: Rect,
     scroll_offset_top: u16,
-) {
+    selection_range: Option<(CellPos, CellPos)>,
+) -> OutputRenderSnapshot {
     let output = Paragraph::new(output.text.clone())
         .scroll((scroll_offset_top, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(output, area);
+
+    highlight_output_selection(frame, area, selection_range);
+    OutputRenderSnapshot {
+        viewport: OutputViewport {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area.height,
+        },
+        cells: capture_output_cells(frame, area),
+    }
+}
+
+fn highlight_output_selection(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    selection_range: Option<(CellPos, CellPos)>,
+) {
+    let Some((start, end)) = selection_range else {
+        return;
+    };
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let start_row = start.row.min(area.height - 1);
+    let end_row = end.row.min(area.height - 1);
+    let start_col = start.col.min(area.width - 1);
+    let end_col = end.col.min(area.width - 1);
+    let (first_row, first_col, last_row, last_col) = if (end_row, end_col) < (start_row, start_col)
+    {
+        (end_row, end_col, start_row, start_col)
+    } else {
+        (start_row, start_col, end_row, end_col)
+    };
+
+    let buf = frame.buffer_mut();
+    for row in first_row..=last_row {
+        let from_col = if row == first_row { first_col } else { 0 };
+        let to_col = if row == last_row {
+            last_col
+        } else {
+            area.width - 1
+        };
+        for col in from_col..=to_col {
+            let cell = &mut buf[(area.x + col, area.y + row)];
+            cell.set_style(cell.style().add_modifier(Modifier::REVERSED));
+        }
+    }
+}
+
+fn capture_output_cells(frame: &mut Frame<'_>, area: Rect) -> Vec<Vec<String>> {
+    let mut cells = Vec::with_capacity(area.height as usize);
+    let buf = frame.buffer_mut();
+    for row in 0..area.height {
+        let mut rendered_row = Vec::with_capacity(area.width as usize);
+        for col in 0..area.width {
+            rendered_row.push(buf[(area.x + col, area.y + row)].symbol().to_string());
+        }
+        cells.push(rendered_row);
+    }
+    cells
 }
 
 /// Builds the fixed banner lines shown at the top of the output area.
@@ -262,7 +331,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).expect("create test terminal");
         terminal
             .draw(|frame| {
-                draw_output(frame, &output, Rect::new(0, 0, 20, 5), scroll);
+                draw_output(frame, &output, Rect::new(0, 0, 20, 5), scroll, None);
             })
             .expect("draw output");
     }

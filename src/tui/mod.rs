@@ -1,5 +1,8 @@
+mod clipboard;
+mod event_router;
 mod input_metrics;
 mod orchestrator;
+mod output_surface;
 mod render;
 mod render_meta;
 mod state;

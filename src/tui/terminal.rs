@@ -12,6 +12,8 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use super::{
+    clipboard,
+    output_surface::selected_text,
     render::{self, RenderMeta},
     state::TuiState,
 };
@@ -41,10 +43,22 @@ impl UiRenderer {
             draw_decision(dirty, is_running, self.running_status_last_draw_at, now);
 
         if should_draw {
-            self.terminal.draw(state, &self.render_meta)?;
+            let snapshot = self.terminal.draw(state, &self.render_meta)?;
+            if let Some((start, end)) = state.take_pending_copy_range()
+                && let Some(text) = selected_text(&snapshot, start, end)
+            {
+                let _ = clipboard::copy_to_clipboard(&text);
+            }
         }
         self.running_status_last_draw_at = next_last_draw;
 
+        Ok(())
+    }
+
+    pub(super) fn sync_layout_context(&self, state: &mut TuiState) -> Result<()> {
+        let area = self.terminal.size()?;
+        let layout = render::layout_context(state, &self.render_meta, area);
+        state.set_layout_context(layout);
         Ok(())
     }
 }
@@ -82,18 +96,20 @@ impl TerminalGuard {
         Ok(Self { terminal })
     }
 
-    pub(super) fn draw(&mut self, state: &mut TuiState, meta: &RenderMeta) -> Result<()> {
-        let mut render_sync = None;
+    pub(super) fn draw(
+        &mut self,
+        state: &TuiState,
+        meta: &RenderMeta,
+    ) -> Result<super::output_surface::OutputRenderSnapshot> {
+        let mut snapshot = None;
         self.terminal.draw(|frame| {
-            render_sync = Some(render::draw(frame, state, meta));
+            snapshot = Some(render::draw(frame, state, meta));
         })?;
-        if let Some(sync) = render_sync {
-            state.apply_render_sync(
-                sync.input_inner_width,
-                sync.max_output_scroll_lines_from_bottom,
-            );
-        }
-        Ok(())
+        Ok(snapshot.expect("frame draw always produces output snapshot"))
+    }
+
+    pub(super) fn size(&self) -> Result<ratatui::layout::Rect> {
+        Ok(self.terminal.size()?.into())
     }
 }
 
