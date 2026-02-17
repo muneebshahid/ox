@@ -513,12 +513,7 @@ const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
     // Keep this exhaustive so newly added UiAction variants force an explicit
     // active-turn policy decision.
     match action {
-        UiAction::ScrollUp { .. }
-        | UiAction::ScrollDown { .. }
-        | UiAction::OutputSelectStart { .. }
-        | UiAction::OutputSelectDrag { .. }
-        | UiAction::OutputSelectEnd { .. }
-        | UiAction::ViewportChanged => true,
+        UiAction::Submit | UiAction::Ignore => false,
         UiAction::Quit
         | UiAction::Insert(_)
         | UiAction::Backspace
@@ -534,9 +529,13 @@ const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
         | UiAction::DeleteToLineStart
         | UiAction::DeleteToLineEnd
         | UiAction::DeleteWordLeft
-        | UiAction::Submit
         | UiAction::Paste(_)
-        | UiAction::Ignore => false,
+        | UiAction::ScrollUp { .. }
+        | UiAction::ScrollDown { .. }
+        | UiAction::OutputSelectStart { .. }
+        | UiAction::OutputSelectDrag { .. }
+        | UiAction::OutputSelectEnd { .. }
+        | UiAction::ViewportChanged => true,
     }
 }
 
@@ -981,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_policy_allows_scroll_but_ignores_typing() {
+    fn active_turn_policy_allows_scroll_and_typing() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
 
@@ -992,7 +991,7 @@ mod tests {
 
         let command = state.handle_ui_action_during_active_turn(UiAction::Insert('x'));
         assert_eq!(command, StateCommand::None);
-        assert_eq!(state.input(), "");
+        assert_eq!(state.input(), "x");
     }
 
     #[test]

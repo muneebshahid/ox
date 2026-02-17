@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_only_allows_scroll_selection_or_viewport_actions() {
+    fn active_turn_allows_scroll_selection_viewport_and_typing() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
         let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
@@ -354,7 +354,7 @@ mod tests {
                 state: KeyEventState::NONE,
             })),
         );
-        assert_eq!(state.input(), "");
+        assert_eq!(state.input(), "x");
         assert_eq!(
             ui_action::adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
             UiAction::Insert('x')
