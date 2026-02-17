@@ -326,17 +326,6 @@ impl TuiState {
         }
     }
 
-    pub(in crate::tui) fn handle_ui_action_during_active_turn(
-        &mut self,
-        action: UiAction,
-    ) -> StateCommand {
-        match action {
-            UiAction::Quit => StateCommand::Quit,
-            _ if is_active_turn_action_allowed(&action) => self.handle_ui_action(action),
-            _ => StateCommand::None,
-        }
-    }
-
     const fn finish_input_edit(&mut self, changed: bool) -> StateCommand {
         if changed {
             self.mark_dirty();
@@ -506,36 +495,6 @@ impl TuiState {
 
     const fn mark_dirty(&mut self) {
         self.dirty = true;
-    }
-}
-
-const fn is_active_turn_action_allowed(action: &UiAction) -> bool {
-    // Keep this exhaustive so newly added UiAction variants force an explicit
-    // active-turn policy decision.
-    match action {
-        UiAction::Submit | UiAction::Ignore => false,
-        UiAction::Quit
-        | UiAction::Insert(_)
-        | UiAction::Backspace
-        | UiAction::Delete
-        | UiAction::MoveCursorLeft
-        | UiAction::MoveCursorRight
-        | UiAction::MoveCursorUp
-        | UiAction::MoveCursorDown
-        | UiAction::MoveCursorWordLeft
-        | UiAction::MoveCursorWordRight
-        | UiAction::MoveCursorLineStart
-        | UiAction::MoveCursorLineEnd
-        | UiAction::DeleteToLineStart
-        | UiAction::DeleteToLineEnd
-        | UiAction::DeleteWordLeft
-        | UiAction::Paste(_)
-        | UiAction::ScrollUp { .. }
-        | UiAction::ScrollDown { .. }
-        | UiAction::OutputSelectStart { .. }
-        | UiAction::OutputSelectDrag { .. }
-        | UiAction::OutputSelectEnd { .. }
-        | UiAction::ViewportChanged => true,
     }
 }
 
@@ -977,63 +936,6 @@ mod tests {
         state.handle_ui_action(UiAction::ViewportChanged);
 
         assert!(state.take_dirty());
-    }
-
-    #[test]
-    fn active_turn_policy_allows_scroll_and_typing() {
-        let mut state = TuiState::new();
-        let _ = state.take_dirty();
-
-        let command = state.handle_ui_action_during_active_turn(UiAction::ScrollUp { lines: 3 });
-        assert_eq!(command, StateCommand::None);
-        assert_eq!(state.output_scroll_lines_from_bottom(), 3);
-        assert!(state.take_dirty());
-
-        let command = state.handle_ui_action_during_active_turn(UiAction::Insert('x'));
-        assert_eq!(command, StateCommand::None);
-        assert_eq!(state.input(), "x");
-    }
-
-    #[test]
-    fn active_turn_policy_ignores_submit_and_allows_quit() {
-        let mut state = TuiState::new();
-        state.handle_ui_action(UiAction::Paste("hello".to_string()));
-
-        let submit = state.handle_ui_action_during_active_turn(UiAction::Submit);
-        assert_eq!(submit, StateCommand::None);
-        assert_eq!(state.input(), "hello");
-
-        let quit = state.handle_ui_action_during_active_turn(UiAction::Quit);
-        assert_eq!(quit, StateCommand::Quit);
-    }
-
-    #[test]
-    fn active_turn_policy_allows_output_selection() {
-        let mut state = TuiState::new();
-        state.apply_render_sync(
-            0,
-            u16::MAX,
-            render_snapshot(
-                OutputViewport {
-                    x: 0,
-                    y: 0,
-                    width: 4,
-                    height: 2,
-                },
-                &["abcd", "efgh"],
-            ),
-        );
-
-        let start = state
-            .handle_ui_action_during_active_turn(UiAction::OutputSelectStart { col: 1, row: 0 });
-        assert_eq!(start, StateCommand::None);
-        let drag = state
-            .handle_ui_action_during_active_turn(UiAction::OutputSelectDrag { col: 2, row: 1 });
-        assert_eq!(drag, StateCommand::None);
-        let end =
-            state.handle_ui_action_during_active_turn(UiAction::OutputSelectEnd { col: 2, row: 1 });
-        assert_eq!(end, StateCommand::None);
-        assert_eq!(state.take_pending_copy_text(), Some("bcd\nefg".to_string()));
     }
 
     #[test]

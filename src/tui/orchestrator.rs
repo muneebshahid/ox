@@ -15,6 +15,7 @@ use futures::{FutureExt, StreamExt};
 use tokio::time::{self, MissedTickBehavior};
 
 use super::{
+    event_router,
     render_meta::build_render_meta,
     state::{StateCommand, TuiState},
     terminal::UiRenderer,
@@ -230,10 +231,16 @@ fn handle_input_during_active_turn(
     event_result: Result<CEvent, std::io::Error>,
 ) -> bool {
     match event_result {
-        Ok(event) => matches!(
-            state.handle_ui_action_during_active_turn(ui_action::adapter::to_ui_action(event)),
-            StateCommand::Quit
-        ),
+        Ok(event) => {
+            let action = ui_action::adapter::to_ui_action(event);
+            if matches!(action, ui_action::UiAction::Quit) {
+                return true;
+            }
+            if event_router::allow_ui_action_during_active_turn(&action) {
+                let _ = state.handle_ui_action(action);
+            }
+            false
+        }
         Err(err) => {
             state.handle_agent_event(CoreEvent::Error(format!("Input error: {err}")));
             false
@@ -359,6 +366,31 @@ mod tests {
             ui_action::adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
             UiAction::Insert('x')
         );
+    }
+
+    #[test]
+    fn active_turn_blocks_submit_while_preserving_input() {
+        let mut state = TuiState::new();
+        let _ = handle_input_during_active_turn(
+            &mut state,
+            Ok(CEvent::Key(KeyEvent {
+                code: KeyCode::Char('h'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+        );
+        let _ = handle_input_during_active_turn(
+            &mut state,
+            Ok(CEvent::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            })),
+        );
+
+        assert_eq!(state.input(), "h");
     }
 
     #[test]

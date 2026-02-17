@@ -1,4 +1,5 @@
 mod clipboard;
+mod event_router;
 mod input_metrics;
 mod orchestrator;
 mod output_surface;
