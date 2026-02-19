@@ -4,6 +4,7 @@ use super::input_cursor;
 pub(super) struct InputBuffer {
     text: String,
     cursor_byte_offset: usize,
+    preferred_vertical_column: Option<u16>,
 }
 
 impl InputBuffer {
@@ -32,11 +33,23 @@ impl InputBuffer {
     }
 
     fn set_cursor_target(&mut self, target: usize) -> bool {
-        self.set_cursor_byte_offset(target)
+        let changed = self.set_cursor_byte_offset(target);
+        self.apply_non_vertical_change(changed)
     }
 
     fn set_cursor_target_if_some(&mut self, target: Option<usize>) -> bool {
-        target.is_some_and(|byte| self.set_cursor_byte_offset(byte))
+        target.is_some_and(|byte| self.set_cursor_target(byte))
+    }
+
+    fn clear_preferred_vertical_column(&mut self) {
+        self.preferred_vertical_column = None;
+    }
+
+    fn apply_non_vertical_change(&mut self, changed: bool) -> bool {
+        if changed {
+            self.clear_preferred_vertical_column();
+        }
+        changed
     }
 
     fn delete_range(&mut self, start: usize, end: usize) -> bool {
@@ -74,8 +87,16 @@ impl InputBuffer {
             self.cursor_byte_offset,
             width,
             direction,
+            self.preferred_vertical_column,
         );
-        self.set_cursor_target_if_some(target)
+        let Some(target) = target else {
+            return false;
+        };
+        if !self.set_cursor_byte_offset(target.byte_offset) {
+            return false;
+        }
+        self.preferred_vertical_column = Some(target.preferred_column);
+        true
     }
 
     pub(super) fn cursor_text(&self) -> &str {
@@ -85,11 +106,13 @@ impl InputBuffer {
     pub(super) fn clear(&mut self) {
         self.text.clear();
         self.cursor_byte_offset = 0;
+        self.clear_preferred_vertical_column();
     }
 
     pub(super) fn insert_char(&mut self, ch: char) {
         self.text.insert(self.cursor_byte_offset, ch);
         self.cursor_byte_offset += ch.len_utf8();
+        self.clear_preferred_vertical_column();
     }
 
     pub(super) fn paste(&mut self, pasted: &str) {
@@ -98,30 +121,35 @@ impl InputBuffer {
         }
         self.text.insert_str(self.cursor_byte_offset, pasted);
         self.cursor_byte_offset += pasted.len();
+        self.clear_preferred_vertical_column();
     }
 
     pub(super) fn backspace(&mut self) -> bool {
         let Some(prev) = prev_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.delete_range_and_set_cursor(prev, self.cursor_byte_offset, prev)
+        let changed = self.delete_range_and_set_cursor(prev, self.cursor_byte_offset, prev);
+        self.apply_non_vertical_change(changed)
     }
 
     pub(super) fn delete_forward(&mut self) -> bool {
         let Some(next) = next_char_boundary(&self.text, self.cursor_byte_offset) else {
             return false;
         };
-        self.delete_range(self.cursor_byte_offset, next)
+        let changed = self.delete_range(self.cursor_byte_offset, next);
+        self.apply_non_vertical_change(changed)
     }
 
     pub(super) fn delete_to_line_start(&mut self) -> bool {
         let target = line_start_boundary(&self.text, self.cursor_byte_offset);
-        self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target)
+        let changed = self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target);
+        self.apply_non_vertical_change(changed)
     }
 
     pub(super) fn delete_to_line_end(&mut self) -> bool {
         let target = line_end_boundary(&self.text, self.cursor_byte_offset);
-        self.delete_range(self.cursor_byte_offset, target)
+        let changed = self.delete_range(self.cursor_byte_offset, target);
+        self.apply_non_vertical_change(changed)
     }
 
     pub(super) fn move_left(&mut self) -> bool {
@@ -154,7 +182,8 @@ impl InputBuffer {
 
     pub(super) fn delete_word_left(&mut self) -> bool {
         let target = prev_word_boundary(&self.text, self.cursor_byte_offset);
-        self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target)
+        let changed = self.delete_range_and_set_cursor(target, self.cursor_byte_offset, target);
+        self.apply_non_vertical_change(changed)
     }
 }
 
@@ -422,6 +451,29 @@ mod tests {
 
         assert!(input.move_down(5));
         assert_eq!(input.cursor_byte_offset(), end);
+    }
+
+    #[test]
+    fn move_up_across_newlines_clamps_to_shorter_line_then_keeps_preferred_column() {
+        let mut input = InputBuffer::new();
+        input.paste("12345\n789\nabcdfe");
+
+        assert!(input.move_up(40));
+        assert_eq!(input.cursor_byte_offset(), 9);
+
+        assert!(input.move_up(40));
+        assert_eq!(input.cursor_byte_offset(), 5);
+    }
+
+    #[test]
+    fn non_vertical_cursor_move_resets_vertical_preferred_column() {
+        let mut input = InputBuffer::new();
+        input.paste("12345\n12345\n12345");
+
+        assert!(input.move_up(40));
+        assert!(input.move_left());
+        assert!(input.move_up(40));
+        assert_eq!(input.cursor_byte_offset(), 4);
     }
 
     #[test]
