@@ -274,12 +274,14 @@ mod tests {
     use crate::{
         events::{hub::RecvError, types::CoreEvent},
         tui::{
+            output_surface::{OutputRenderSnapshot, OutputViewport},
             state::TuiState,
             ui_action::{self, UiAction},
         },
     };
     use crossterm::event::{
-        Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
+        Event as CEvent, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
+        MouseEvent, MouseEventKind,
     };
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -336,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn active_turn_only_allows_scroll_or_viewport_actions() {
+    fn active_turn_allows_scroll_selection_viewport_and_typing() {
         let mut state = TuiState::new();
         let _ = state.take_dirty();
         let _ = handle_input_during_active_turn(&mut state, Ok(CEvent::Key(key(KeyCode::PageUp))));
@@ -352,11 +354,56 @@ mod tests {
                 state: KeyEventState::NONE,
             })),
         );
-        assert_eq!(state.input(), "");
+        assert_eq!(state.input(), "x");
         assert_eq!(
             ui_action::adapter::to_ui_action(CEvent::Key(key(KeyCode::Char('x')))),
             UiAction::Insert('x')
         );
+    }
+
+    #[test]
+    fn active_turn_allows_output_selection_actions() {
+        let mut state = TuiState::new();
+        state.apply_render_sync(
+            0,
+            u16::MAX,
+            OutputRenderSnapshot {
+                viewport: OutputViewport {
+                    x: 0,
+                    y: 0,
+                    width: 4,
+                    height: 2,
+                },
+                cells: vec![
+                    "abcd".chars().map(|ch| ch.to_string()).collect(),
+                    "efgh".chars().map(|ch| ch.to_string()).collect(),
+                ],
+            },
+        );
+
+        let down = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 1,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        let drag = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let up = CEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 2,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert!(!handle_input_during_active_turn(&mut state, Ok(down)));
+        assert!(!handle_input_during_active_turn(&mut state, Ok(drag)));
+        assert!(!handle_input_during_active_turn(&mut state, Ok(up)));
+        assert_eq!(state.take_pending_copy_text(), Some("bcd\nefg".to_string()));
     }
 
     #[test]

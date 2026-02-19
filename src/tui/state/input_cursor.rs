@@ -7,6 +7,12 @@ pub(super) enum VerticalDirection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct VerticalMoveTarget {
+    pub(super) byte_offset: usize,
+    pub(super) preferred_column: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CursorPosition {
     byte: usize,
     col: u16,
@@ -18,7 +24,8 @@ pub(super) fn target_cursor_byte_offset_for_vertical_move(
     current_cursor_byte_offset: usize,
     width: u16,
     direction: VerticalDirection,
-) -> Option<usize> {
+    preferred_column: Option<u16>,
+) -> Option<VerticalMoveTarget> {
     if width == 0 {
         return None;
     }
@@ -28,6 +35,9 @@ pub(super) fn target_cursor_byte_offset_for_vertical_move(
         .iter()
         .find(|pos| pos.byte == current_cursor_byte_offset)
         .copied()?;
+    let current_row_start = row_start_col(&positions, current.row)?;
+    let preferred_column =
+        preferred_column.unwrap_or_else(|| current.col.saturating_sub(current_row_start));
 
     let target_row = match direction {
         VerticalDirection::Up => {
@@ -39,8 +49,16 @@ pub(super) fn target_cursor_byte_offset_for_vertical_move(
         VerticalDirection::Down => current.row.saturating_add(1),
     };
 
-    let target = closest_position_on_row(&positions, target_row, current.col)?;
-    (target.byte != current_cursor_byte_offset).then_some(target.byte)
+    let target_row_start = row_start_col(&positions, target_row)?;
+    let target = closest_position_on_row(
+        &positions,
+        target_row,
+        target_row_start.saturating_add(preferred_column),
+    )?;
+    (target.byte != current_cursor_byte_offset).then_some(VerticalMoveTarget {
+        byte_offset: target.byte,
+        preferred_column,
+    })
 }
 
 fn cursor_positions_with_prompt(input: &str, width: u16) -> Vec<CursorPosition> {
@@ -134,6 +152,13 @@ fn closest_position_on_row(
     best_lte.or(best_gt)
 }
 
+fn row_start_col(positions: &[CursorPosition], row: u16) -> Option<u16> {
+    positions
+        .iter()
+        .filter_map(|position| (position.row == row).then_some(position.col))
+        .min()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{VerticalDirection, target_cursor_byte_offset_for_vertical_move};
@@ -141,7 +166,7 @@ mod tests {
     #[test]
     fn returns_cursor_positions_for_all_char_boundaries() {
         let target =
-            target_cursor_byte_offset_for_vertical_move("ab", 2, 10, VerticalDirection::Up);
+            target_cursor_byte_offset_for_vertical_move("ab", 2, 10, VerticalDirection::Up, None);
         assert_eq!(target, None);
     }
 
@@ -150,14 +175,20 @@ mod tests {
         let input = "abcdefghij";
         let end = input.len();
 
-        let up = target_cursor_byte_offset_for_vertical_move(input, end, 5, VerticalDirection::Up)
-            .expect("expected up target");
-        assert!(up < end);
+        let up =
+            target_cursor_byte_offset_for_vertical_move(input, end, 5, VerticalDirection::Up, None)
+                .expect("expected up target");
+        assert!(up.byte_offset < end);
 
-        let down =
-            target_cursor_byte_offset_for_vertical_move(input, up, 5, VerticalDirection::Down)
-                .expect("expected down target");
-        assert_eq!(down, end);
+        let down = target_cursor_byte_offset_for_vertical_move(
+            input,
+            up.byte_offset,
+            5,
+            VerticalDirection::Down,
+            Some(up.preferred_column),
+        )
+        .expect("expected down target");
+        assert_eq!(down.byte_offset, end);
     }
 
     #[test]
@@ -165,9 +196,57 @@ mod tests {
         let input = "hello\n";
         let current = input.len();
 
-        let up =
-            target_cursor_byte_offset_for_vertical_move(input, current, 20, VerticalDirection::Up)
-                .expect("expected up target");
-        assert!(up < current);
+        let up = target_cursor_byte_offset_for_vertical_move(
+            input,
+            current,
+            20,
+            VerticalDirection::Up,
+            None,
+        )
+        .expect("expected up target");
+        assert!(up.byte_offset < current);
+    }
+
+    #[test]
+    fn moving_up_to_first_input_row_ignores_prompt_offset() {
+        let input = "12345\n789";
+        let current = "12345\n789".len();
+
+        let up = target_cursor_byte_offset_for_vertical_move(
+            input,
+            current,
+            40,
+            VerticalDirection::Up,
+            None,
+        )
+        .expect("expected up target");
+
+        assert_eq!(up.byte_offset, 3);
+    }
+
+    #[test]
+    fn repeated_vertical_moves_keep_original_preferred_column() {
+        let input = "12345\n789\nabcdfe";
+        let current = input.len();
+
+        let first_up = target_cursor_byte_offset_for_vertical_move(
+            input,
+            current,
+            40,
+            VerticalDirection::Up,
+            None,
+        )
+        .expect("expected first up target");
+        assert_eq!(first_up.byte_offset, 9);
+
+        let second_up = target_cursor_byte_offset_for_vertical_move(
+            input,
+            first_up.byte_offset,
+            40,
+            VerticalDirection::Up,
+            Some(first_up.preferred_column),
+        )
+        .expect("expected second up target");
+        assert_eq!(second_up.byte_offset, 5);
     }
 }

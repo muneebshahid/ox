@@ -1,5 +1,5 @@
 use crossterm::event::{
-    Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+    Event as CEvent, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
 use super::UiAction;
@@ -142,6 +142,18 @@ const fn to_ui_action_from_mouse(mouse: MouseEvent) -> UiAction {
         },
         MouseEventKind::ScrollDown => UiAction::ScrollDown {
             lines: MOUSE_SCROLL_LINES,
+        },
+        MouseEventKind::Down(MouseButton::Left) => UiAction::OutputSelectStart {
+            col: mouse.column,
+            row: mouse.row,
+        },
+        MouseEventKind::Drag(MouseButton::Left) => UiAction::OutputSelectDrag {
+            col: mouse.column,
+            row: mouse.row,
+        },
+        MouseEventKind::Up(MouseButton::Left) => UiAction::OutputSelectEnd {
+            col: mouse.column,
+            row: mouse.row,
         },
         _ => UiAction::Ignore,
     }
@@ -310,14 +322,36 @@ mod tests {
             })),
             UiAction::Quit
         );
+    }
+
+    #[test]
+    fn maps_mouse_selection_actions() {
         assert_eq!(
             to_ui_action(CEvent::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: 1,
-                row: 1,
+                column: 12,
+                row: 4,
                 modifiers: KeyModifiers::NONE,
             })),
-            UiAction::Ignore
+            UiAction::OutputSelectStart { col: 12, row: 4 }
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 17,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            })),
+            UiAction::OutputSelectDrag { col: 17, row: 8 }
+        );
+        assert_eq!(
+            to_ui_action(CEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 17,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            })),
+            UiAction::OutputSelectEnd { col: 17, row: 8 }
         );
     }
 
@@ -409,7 +443,7 @@ mod tests {
     fn ignores_non_scroll_mouse_and_non_quit_keys() {
         assert_eq!(
             to_ui_action(CEvent::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
+                kind: MouseEventKind::Moved,
                 column: 0,
                 row: 0,
                 modifiers: KeyModifiers::NONE,
