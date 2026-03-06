@@ -23,7 +23,10 @@ pub async fn post(
             .post(url)
             .json(payload)
             .headers(resolved_headers.clone());
-        let result = request.send().await.and_then(|r| r.error_for_status());
+        let result = request
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status);
         match result {
             Ok(res) => {
                 let parsed = res.json::<serde_json::Value>().await?;
@@ -33,9 +36,8 @@ pub async fn post(
                 let is_retryable = is_retryable_error(&e);
                 if retry == MAX_RETRIES || !is_retryable {
                     return Err(e.into());
-                } else {
-                    tokio::time::sleep(backoff_delay(retry)).await;
                 }
+                tokio::time::sleep(backoff_delay(retry)).await;
             }
         }
     }
@@ -46,11 +48,11 @@ fn is_retryable_error(e: &reqwest::Error) -> bool {
     e.is_timeout()
         || e.is_connect()
         || e.status()
-            .map_or(false, |code| RETRYABLE_ERROR_CODES.contains(&code.as_u16()))
+            .is_some_and(|code| RETRYABLE_ERROR_CODES.contains(&code.as_u16()))
 }
 
 fn backoff_delay(retry: u32) -> std::time::Duration {
-    let delay = BASE_DELAY_MS * 2u64.pow(retry) as u64;
+    let delay = BASE_DELAY_MS * 2u64.pow(retry);
     std::time::Duration::from_millis(std::cmp::min(delay, MAX_DELAY_MS))
 }
 

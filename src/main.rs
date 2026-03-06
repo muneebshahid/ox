@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let url = "https://httpbin.org/post";
     let response = client::post(&payload, None, url).await?;
-    println!("Response: {:#?}", response);
+    println!("Response: {response:#?}");
 
     Ok(())
 }
