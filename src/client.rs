@@ -98,7 +98,7 @@ mod tests {
         mock.assert_async().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_post_retries_on_server_error() {
         let mut server = mockito::Server::new_async().await;
         let fail_mock = server
@@ -141,7 +141,7 @@ mod tests {
         mock.assert_async().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_post_returns_error_when_retries_exhausted() {
         let mut server = mockito::Server::new_async().await;
         let mock = server

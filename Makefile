@@ -1,4 +1,4 @@
-.PHONY: fmt lint run version release
+.PHONY: fmt lint run version release test
 
 fmt:
 	cargo fmt
@@ -11,6 +11,9 @@ run:
 
 version:
 	@grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'
+
+test:
+	cargo test
 
 release:
 	@VERSION=$$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'); \
