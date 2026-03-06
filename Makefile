@@ -7,7 +7,7 @@ lint:
 	cargo clippy -- -D clippy::pedantic -D clippy::nursery
 
 run:
-	cargo run --release
+	cargo run
 
 version:
 	@grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/'
